@@ -6,4 +6,5 @@ A server application for a Raspberry Pi computer running Raspbian, using the [No
 - Store a playlist of URLs and cycle Chromium through the list at regular intervals.
 
 Builds: https://membranesoftware.com/membrane-monitor/
+
 About Membrane Monitor: https://membranesoftware.com/i/about-membrane-monitor
