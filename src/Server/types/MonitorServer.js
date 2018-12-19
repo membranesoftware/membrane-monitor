@@ -1,3 +1,33 @@
+/*
+* Copyright 2018 Membrane Software <author@membranesoftware.com>
+*                 https://membranesoftware.com
+*
+* Redistribution and use in source and binary forms, with or without
+* modification, are permitted provided that the following conditions are met:
+*
+* 1. Redistributions of source code must retain the above copyright notice,
+* this list of conditions and the following disclaimer.
+*
+* 2. Redistributions in binary form must reproduce the above copyright notice,
+* this list of conditions and the following disclaimer in the documentation
+* and/or other materials provided with the distribution.
+*
+* 3. Neither the name of the copyright holder nor the names of its contributors
+* may be used to endorse or promote products derived from this software without
+* specific prior written permission.
+*
+* THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+* AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+* IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+* ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+* LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+* CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+* SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+* INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+* CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+* ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+* POSSIBILITY OF SUCH DAMAGE.
+*/
 "use strict";
 
 var App = global.App || { };
@@ -5,13 +35,13 @@ var EventEmitter = require ("events").EventEmitter;
 var Result = require (App.SOURCE_DIRECTORY + "/Result");
 var Log = require (App.SOURCE_DIRECTORY + "/Log");
 var SystemInterface = require (App.SOURCE_DIRECTORY + "/SystemInterface");
-var AgentProcess = require (App.SOURCE_DIRECTORY + "/AgentProcess");
-var AgentControl = require (App.SOURCE_DIRECTORY + "/AgentControl");
+var ExecProcess = require (App.SOURCE_DIRECTORY + "/ExecProcess");
 var RepeatTask = require (App.SOURCE_DIRECTORY + "/RepeatTask");
 var Intent = require (App.SOURCE_DIRECTORY + "/Intent/Intent");
 var ServerBase = require (App.SOURCE_DIRECTORY + "/Server/ServerBase");
 
-const XSET_PROCESS_NAME = "xset.sh";
+const XSET_OFF_PROCESS_NAME = "xset-off.sh";
+const XSET_ACTIVATE_PROCESS_NAME = "xset-activate.sh";
 const OMXPLAYER_PLAY_PROCESS_NAME = "omxplayer-play.sh";
 const OMXPLAYER_STOP_PROCESS_NAME = "omxplayer-stop.sh";
 const CHROMIUM_START_PROCESS_NAME = "chromium-start.sh";
@@ -27,13 +57,6 @@ class MonitorServer extends ServerBase {
 		this.description = "Accept and execute commands to control content shown by a display";
 
 		this.configureParams = [
-			{
-				name: "writeIntentsInterval",
-				type: "number",
-				flags: SystemInterface.ParamFlag.Required | SystemInterface.ParamFlag.GreaterThanZero,
-				description: "The interval to use for periodically storing intent state, in seconds",
-				defaultValue: 900
-			}
 		];
 
 		this.playProcess = null;
@@ -43,11 +66,6 @@ class MonitorServer extends ServerBase {
 		this.isFindingBrowserProcess = false;
 		this.browserUrl = "";
 
-		this.agentControl = new AgentControl ();
-
-		this.updateIntentsTask = new RepeatTask ();
-		this.writeIntentsTask = new RepeatTask ();
-		this.webDisplayIntent = null;
 		this.emitter = new EventEmitter ();
 		this.emitter.setMaxListeners (0);
 		this.isClearing = false;
@@ -55,22 +73,9 @@ class MonitorServer extends ServerBase {
 
 	// Start the server's operation and invoke the provided callback when complete, with an "err" parameter (non-null if an error occurred)
 	doStart (startCallback) {
-		let record, intent, proc;
+		let deactivateDesktopBlankComplete;
 
-		record = App.systemAgent.runState.monitorServerIntent;
-		if ((typeof record == "object") && (record != null)) {
-			intent = Intent.createIntent (record.name);
-			if (intent == null) {
-				Log.write (Log.NOTICE, `${this.toString ()} failed to read intent state; name=${record.name}`);
-			}
-			else {
-				intent.agentControl = this.agentControl;
-				intent.readIntentState (record);
-				this.webDisplayIntent = intent;
-			}
-		}
-
-		App.systemAgent.addInvokeRequestHandler ("/", SystemInterface.Constant.Display, (cmdInv) => {
+		App.systemAgent.addInvokeRequestHandler ("/", SystemInterface.Constant.Monitor, (cmdInv) => {
 			switch (cmdInv.command) {
 				case SystemInterface.CommandId.GetStatus: {
 					return (this.getStatus ());
@@ -84,40 +89,32 @@ class MonitorServer extends ServerBase {
 				case SystemInterface.CommandId.ShowWebUrl: {
 					return (this.showWebUrl (cmdInv));
 				}
-				case SystemInterface.CommandId.CreateMonitorIntent: {
-					return (this.createMonitorIntent (cmdInv));
+				case SystemInterface.CommandId.CreateWebDisplayIntent: {
+					return (this.createWebDisplayIntent (cmdInv));
+				}
+				case SystemInterface.CommandId.CreateMediaDisplayIntent: {
+					return (this.createMediaDisplayIntent (cmdInv));
 				}
 			}
 			return (null);
 		});
 
-		proc = new AgentProcess (XSET_PROCESS_NAME, [ ], { }, "", null, null);
-
-		this.updateIntentsTask.setRepeating ((callback) => {
-			this.updateIntents ();
-			process.nextTick (callback);
-		}, App.HEARTBEAT_PERIOD, Math.floor (App.HEARTBEAT_PERIOD * 1.1));
-
-		this.writeIntentsTask.setRepeating ((callback) => {
-			this.writeIntents ();
-			process.nextTick (callback);
-		}, Math.floor (this.configureMap.writeIntentsInterval * 1000 * 0.95), (this.configureMap.writeIntentsInterval * 1000));
-
-		this.isRunning = true;
-		process.nextTick (startCallback);
+		setTimeout (() => {
+			this.deactivateDesktopBlank (deactivateDesktopBlankComplete);
+		}, 0);
+		deactivateDesktopBlankComplete = () => {
+			startCallback ();
+		};
 	}
 
-	// Stop the server's operation and set isRunning to false, and invoke the provided callback when complete
-	stop (stopCallback) {
-		this.isRunning = false;
-		this.updateIntentsTask.stopRepeat ();
-		this.writeIntentsTask.stopRepeat ();
-		process.nextTick (stopCallback);
+	// Execute subclass-specific stop operations and invoke the provided callback when complete
+	doStop (stopCallback) {
+		this.clear (stopCallback);
 	}
 
 	// Return a command invocation containing the server's status
 	doGetStatus (cmdInv) {
-		let params;
+		let params, intents;
 
 		params = {
 			isPlaying: (this.playProcess != null),
@@ -125,37 +122,38 @@ class MonitorServer extends ServerBase {
 			isShowingUrl: this.isBrowserRunning,
 			showUrl: this.browserUrl
 		};
-		if ((this.webDisplayIntent != null) && this.webDisplayIntent.isActive) {
-			params.intentName = this.webDisplayIntent.displayName;
+
+		intents = App.systemAgent.findIntents (this.name, true);
+		if (intents.length > 0) {
+			params.intentName = intents[0].displayName;
 		}
-		return (this.createCommand ("MonitorServerStatus", SystemInterface.Constant.Display, params));
+
+		return (this.createCommand ("MonitorServerStatus", SystemInterface.Constant.Monitor, params));
 	}
 
 	// Execute a ClearDisplay command and return a result command
 	clearDisplay (cmdInv) {
-		if (this.webDisplayIntent != null) {
-			this.webDisplayIntent.setActive (false);
-		}
+		App.systemAgent.removeIntentGroup (this.name);
 		this.clear (function () { });
-		return (this.createCommand ("CommandResult", SystemInterface.Constant.Display, {
+		return (this.createCommand ("CommandResult", SystemInterface.Constant.Monitor, {
 			success: true
 		}));
 	}
 
 	// Execute a PlayMedia command and return a result command
 	playMedia (cmdInv) {
-		let proc, clearComplete, playProcessEnded;
-
-		Log.write (Log.DEBUG, this.toString () + " play media; cmd=" + JSON.stringify (cmdInv));
-
-		if (this.webDisplayIntent != null) {
-			this.webDisplayIntent.setActive (false);
+		let proc, clearComplete, activateDesktopBlankComplete, playProcessEnded;
+		if (cmdInv.prefix[SystemInterface.Constant.AgentIdPrefixField] != App.systemAgent.agentId) {
+			App.systemAgent.removeIntentGroup (this.name);
 		}
-		this.clear (() => {
-			clearComplete ();
-		});
+		setTimeout (() => {
+			this.clear (clearComplete);
+		}, 0);
 		clearComplete = () => {
-			proc = new AgentProcess (OMXPLAYER_PLAY_PROCESS_NAME, [ ], {
+			this.activateDesktopBlank (activateDesktopBlankComplete);
+		};
+		activateDesktopBlankComplete = () => {
+			proc = new ExecProcess (OMXPLAYER_PLAY_PROCESS_NAME, [ ], {
 				WORKING_DIR: App.DATA_DIRECTORY,
 				TARGET_MEDIA: cmdInv.params.streamUrl
 			}, "", null, playProcessEnded);
@@ -164,15 +162,13 @@ class MonitorServer extends ServerBase {
 		};
 
 		playProcessEnded = () => {
-			Log.write (Log.DEBUG, this.toString () + " play process ended; cmd=" + JSON.stringify (cmdInv));
-
 			if (proc != this.playProcess) {
 				return;
 			}
 			this.playProcess = null;
 		};
 
-		return (this.createCommand ("CommandResult", SystemInterface.Constant.Display, {
+		return (this.createCommand ("CommandResult", SystemInterface.Constant.Monitor, {
 			success: true
 		}));
 	}
@@ -185,8 +181,6 @@ class MonitorServer extends ServerBase {
 		if (this.isClearing) {
 			return;
 		}
-
-		Log.write (Log.DEBUG3, this.toString () + " begin clear");
 		this.isClearing = true;
 		this.stopOmxplayer (() => {
 			stopOmxplayerComplete ();
@@ -199,7 +193,6 @@ class MonitorServer extends ServerBase {
 		};
 
 		endClear = () => {
-			Log.write (Log.DEBUG3, this.toString () + " end clear");
 			this.isClearing = false;
 			this.emitter.emit (CLEAR_COMPLETE_EVENT);
 		};
@@ -218,7 +211,7 @@ class MonitorServer extends ServerBase {
 		}
 		this.playProcess = null;
 
-		proc = new AgentProcess (OMXPLAYER_STOP_PROCESS_NAME, [ ], {
+		proc = new ExecProcess (OMXPLAYER_STOP_PROCESS_NAME, [ ], {
 			SIGNAL_TYPE: "TERM"
 		}, "", null, callback);
 
@@ -236,17 +229,26 @@ class MonitorServer extends ServerBase {
 			return;
 		}
 
-		proc = new AgentProcess (CHROMIUM_STOP_PROCESS_NAME, [ ], { }, "", null, callback);
+		proc = new ExecProcess (CHROMIUM_STOP_PROCESS_NAME, [ ], { }, "", null, callback);
 	}
 
 	// Execute a ShowWebUrl command and return a result command
 	showWebUrl (cmdInv) {
-		Log.write (Log.DEBUG, this.toString () + " show web URL; cmd=" + JSON.stringify (cmdInv));
+		let clearComplete, deactivateDesktopBlankComplete;
+		if (cmdInv.prefix[SystemInterface.Constant.AgentIdPrefixField] != App.systemAgent.agentId) {
+			App.systemAgent.removeIntentGroup (this.name);
+		}
 
-		this.clear (() => {
+		setTimeout (() => {
+			this.clear (clearComplete);
+		}, 0);
+		clearComplete = () => {
+			this.deactivateDesktopBlank (deactivateDesktopBlankComplete);
+		};
+		deactivateDesktopBlankComplete = () => {
 			let proc;
 
-			proc = new AgentProcess (CHROMIUM_START_PROCESS_NAME, [ ], {
+			proc = new ExecProcess (CHROMIUM_START_PROCESS_NAME, [ ], {
 				TARGET_URL: cmdInv.params.url
 			}, "", null, null);
 
@@ -258,9 +260,9 @@ class MonitorServer extends ServerBase {
 			this.findBrowserProcessTimeout = setTimeout (() => {
 				this.findBrowserProcess ();
 			}, FIND_BROWSER_PROCESS_PERIOD);
-		});
+		};
 
-		return (this.createCommand ("CommandResult", SystemInterface.Constant.Display, {
+		return (this.createCommand ("CommandResult", SystemInterface.Constant.Monitor, {
 			success: true
 		}));
 	}
@@ -274,13 +276,9 @@ class MonitorServer extends ServerBase {
 		}
 
 		this.isFindingBrowserProcess = true;
-		Log.write (Log.DEBUG2, this.toString () + " findBrowserProcess");
 		found = false;
 
 		procDataCallback = (lines, parseCallback) => {
-			if (App.ENABLE_VERBOSE_LOGGING) {
-				Log.write (Log.DEBUG2, this.toString () + " findBrowserProcess data: " + JSON.stringify (lines));
-			}
 			// The chromium-find-process.sh script prints "true" if the process was found
 			for (let i = 0; i < lines.length; i++) {
 				if (lines[i] == "true") {
@@ -292,9 +290,6 @@ class MonitorServer extends ServerBase {
 		};
 
 		procEndCallback = () => {
-			if (App.ENABLE_VERBOSE_LOGGING) {
-				Log.write (Log.DEBUG2, this.toString () + " findBrowserProcess end found=" + found);
-			}
 			this.isFindingBrowserProcess = false;
 			this.isBrowserRunning = found;
 
@@ -308,56 +303,25 @@ class MonitorServer extends ServerBase {
 			}
 		};
 
-		proc = new AgentProcess (CHROMIUM_FIND_PROCESS_NAME, [ ], { }, "", procDataCallback, procEndCallback);
+		proc = new ExecProcess (CHROMIUM_FIND_PROCESS_NAME, [ ], { }, "", procDataCallback, procEndCallback);
 	}
 
-	// Perform actions to update active intents as appropriate for the current state of the application
-	updateIntents () {
-		let cmd;
+	// Deactivate and disable desktop screen blank functionality and invoke the provided callback when complete
+	deactivateDesktopBlank (endCallback) {
+		let proc;
 
-		if (App.ENABLE_VERBOSE_LOGGING) {
-			Log.write (Log.DEBUG4, `${this.toString ()} updateIntents begin`);
-		}
-
-		if ((this.webDisplayIntent == null) || (! this.webDisplayIntent.isActive)) {
-			this.updateIntentsTask.suspendRepeat ();
-			return;
-		}
-
-		cmd = App.systemAgent.getStatus ();
-		if (cmd != null) {
-			this.agentControl.updateAgentStatus (cmd);
-		}
-
-		this.webDisplayIntent.update ();
-		if (App.ENABLE_VERBOSE_LOGGING) {
-			Log.write (Log.DEBUG4, `${this.toString ()} updateIntents ended`);
-		}
+		proc = new ExecProcess (XSET_OFF_PROCESS_NAME, [ ], { }, "", null, endCallback);
 	}
 
-	// Store state for all intents
-	writeIntents () {
-		let cmd, result;
+	// Activate the desktop screen blank and invoke the provided callback when complete
+	activateDesktopBlank (endCallback) {
+		let proc;
 
-		if (App.ENABLE_VERBOSE_LOGGING) {
-			Log.write (Log.DEBUG4, `${this.toString ()} writeIntents begin`);
-		}
-
-		if ((this.webDisplayIntent == null) || (! this.webDisplayIntent.isActive)) {
-			this.writeIntentsTask.suspendRepeat ();
-			return;
-		}
-
-		cmd = this.createCommand ("IntentState", SystemInterface.Constant.Display, this.webDisplayIntent.getIntentState ());
-		if (cmd != null) {
-			App.systemAgent.updateRunState ({
-				monitorServerIntent: cmd.params
-			});
-		}
+		proc = new ExecProcess (XSET_ACTIVATE_PROCESS_NAME, [ ], { }, "", null, endCallback);
 	}
 
 	// Start an intent to show web content on display agents and return a CommandResult command
-	createMonitorIntent (cmdInv) {
+	createWebDisplayIntent (cmdInv) {
 		let intent, params;
 
 		params = {
@@ -369,17 +333,33 @@ class MonitorServer extends ServerBase {
 			params.error = "Internal server error";
 		}
 		else {
-			intent.agentControl = this.agentControl;
-			if (this.webDisplayIntent != null) {
-				this.webDisplayIntent.setActive (false);
-			}
-			this.webDisplayIntent = intent;
-			this.updateIntentsTask.setNextRepeat (0);
-			this.writeIntentsTask.setNextRepeat (4800);
+			App.systemAgent.removeIntentGroup (this.name);
+			App.systemAgent.runIntent (intent, this.name);
 			params.success = true;
 		}
 
-		return (this.createCommand ("CommandResult", SystemInterface.Constant.Display, params));
+		return (this.createCommand ("CommandResult", SystemInterface.Constant.Monitor, params));
+	}
+
+	// Start an intent to show media content on display agents and return a CommandResult command
+	createMediaDisplayIntent (cmdInv) {
+		let intent, params;
+
+		params = {
+			success: false,
+			error: ""
+		};
+		intent = Intent.createIntent ("MediaDisplayIntent", cmdInv.params);
+		if (intent == null) {
+			params.error = "Internal server error";
+		}
+		else {
+			App.systemAgent.removeIntentGroup (this.name);
+			App.systemAgent.runIntent (intent, this.name);
+			params.success = true;
+		}
+
+		return (this.createCommand ("CommandResult", SystemInterface.Constant.Monitor, params));
 	}
 }
 module.exports = MonitorServer;

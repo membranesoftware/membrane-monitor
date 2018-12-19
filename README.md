@@ -1,9 +1,13 @@
 ## Membrane Monitor
 
-A server application for a Raspberry Pi computer running Raspbian, using the [Node.js](https://nodejs.org/) runtime. While enabled, it provides functions for access by the Membrane Control interface.
+A server application that executes in the [Node.js](https://nodejs.org/) runtime, targeting the Raspbian (Raspberry Pi) platform.
 
-- Launch the Chromium browser to display a particular web site, as specified by URL.
+Primary functions:
+- Launch the [Chromium](https://www.chromium.org/Home) browser to display a particular web site, as specified by URL.
 - Store a playlist of URLs and cycle Chromium through the list at regular intervals.
+- Launch [omxplayer](https://www.raspberrypi.org/documentation/raspbian/applications/omxplayer.md) to display a particular video stream, as specified by URL.
+- Store a playlist of video streams and cycle omxplayer through the list at regular intervals.
+- Accept commands received from the [Membrane Control](https://github.com/membranesoftware/membrane-control) interface
 
 Builds: https://membranesoftware.com/membrane-monitor/
 

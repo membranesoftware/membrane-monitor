@@ -1,3 +1,33 @@
+/*
+* Copyright 2018 Membrane Software <author@membranesoftware.com>
+*                 https://membranesoftware.com
+*
+* Redistribution and use in source and binary forms, with or without
+* modification, are permitted provided that the following conditions are met:
+*
+* 1. Redistributions of source code must retain the above copyright notice,
+* this list of conditions and the following disclaimer.
+*
+* 2. Redistributions in binary form must reproduce the above copyright notice,
+* this list of conditions and the following disclaimer in the documentation
+* and/or other materials provided with the distribution.
+*
+* 3. Neither the name of the copyright holder nor the names of its contributors
+* may be used to endorse or promote products derived from this software without
+* specific prior written permission.
+*
+* THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+* AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+* IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+* ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+* LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+* CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+* SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+* INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+* CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+* ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+* POSSIBILITY OF SUCH DAMAGE.
+*/
 // Class that runs servers and receives remote commands on their behalf
 
 "use strict";
@@ -6,45 +36,56 @@ var App = global.App || { };
 var Os = require ("os");
 var Fs = require ("fs");
 var Http = require ("http");
+var Https = require ("https");
+var Crypto = require ("crypto");
+var EventEmitter = require ("events").EventEmitter;
 var Dgram = require ("dgram");
 var Url = require ("url");
 var QueryString = require ("querystring");
 var UuidV4 = require ("uuid/v4");
 var Async = require ("async");
-var IoClient = require ("socket.io-client");
+var Io = require ("socket.io");
 var Log = require (App.SOURCE_DIRECTORY + "/Log");
 var Result = require (App.SOURCE_DIRECTORY + "/Result");
 var FsUtil = require (App.SOURCE_DIRECTORY + "/FsUtil");
 var Ipv4Address = require (App.SOURCE_DIRECTORY + "/Ipv4Address");
 var Task = require (App.SOURCE_DIRECTORY + "/Task/Task");
+var TaskGroup = require (App.SOURCE_DIRECTORY + "/Task/TaskGroup");
 var RepeatTask = require (App.SOURCE_DIRECTORY + "/RepeatTask");
+var IntentGroup = require (App.SOURCE_DIRECTORY + "/Intent/IntentGroup");
 var SystemInterface = require (App.SOURCE_DIRECTORY + "/SystemInterface");
-var AgentProcess = require (App.SOURCE_DIRECTORY + "/AgentProcess");
+var DataStore = require (App.SOURCE_DIRECTORY + "/DataStore");
+var AccessControl = require (App.SOURCE_DIRECTORY + "/AccessControl");
+var ExecProcess = require (App.SOURCE_DIRECTORY + "/ExecProcess");
 var Server = require (App.SOURCE_DIRECTORY + "/Server/Server");
 
-const LINK_SERVER_BROADCAST_PERIOD = 22; // seconds
+const START_EVENT = "start";
 
 class SystemAgent {
 	constructor () {
-		this.isStarted = false;
 		this.isEnabled = true;
-		this.dataPath = App.DATA_DIRECTORY + "/systemagent";
+		this.dataPath = App.DATA_DIRECTORY;
 		this.runStatePath = this.dataPath + "/state";
 		this.agentId = "";
 
 		this.displayName = "";
 		this.applicationName = "";
 		this.urlHostname = "";
-		this.agentLinkUrl = "";
 		this.platform = "";
-
-		// TODO: Possibly set a different user ID value for use in command invocations
-		this.commandUserId = "systemagent";
 
 		this.isStarted = false;
 		this.startTime = 0;
-		this.httpServer = null;
-		this.httpServerPort = 0;
+		this.httpServer1 = null;
+		this.httpServerPort1 = 0;
+		this.httpServer2 = null;
+		this.httpServerPort2 = 0;
+		this.linkPath = App.LINK_PATH;
+		if (this.linkPath == "") {
+			this.linkPath = this.getRandomString (32);
+		}
+		if (this.linkPath.indexOf ("/") != 0) {
+			this.linkPath = "/" + this.linkPath;
+		}
 
 		this.isBroadcastReady = false;
 		this.datagramSocket = null;
@@ -54,14 +95,17 @@ class SystemAgent {
 		// A map of interface names to broadcast addresses for use by the datagram socket
 		this.datagramBroadcastAddressMap = { };
 
-		// A map of paths to functions for handling requests received by the HTTP server
-		this.requestHandlerMap = { };
+		// A map of paths to functions for handling requests received by the main HTTP server
+		this.mainRequestHandlerMap = { };
 
-		// A map of paths to functions for handling invoke requests received by the HTTP server
+		// A map of paths to functions for handling requests received by the secondary HTTP server
+		this.secondaryRequestHandlerMap = { };
+
+		// A map of paths to functions for handling invoke requests received by the main HTTP server
 		this.invokeRequestHandlerMap = { };
 
-		// A map of command type values to functions for handling received linkClient calls
-		this.linkCommandTypeMap = { };
+		// A map of command type values to functions for handling commands received by the link server
+		this.linkCommandHandlerMap = { };
 
 		// A list of Server objects
 		this.serverList = [ ];
@@ -69,63 +113,55 @@ class SystemAgent {
 		// A map of configuration values persisted as local state in the agent's data path
 		this.runState = { };
 
-		// A map of task ID values to Task objects
-		this.taskMap = { };
+		this.accessControl = new AccessControl ();
 
-		// A map of task ID values to cached TaskItem objects, used to publish event record updates
-		this.taskRecordMap = { };
+		this.taskGroup = new TaskGroup ();
+		this.taskGroup.maxRunCount = App.MAX_TASK_COUNT;
 
-		this.maxRunCount = App.MAX_TASK_COUNT;
-		this.taskExpireTime = 900; // seconds
-		this.updateTaskMapTask = new RepeatTask ();
+		this.intentGroup = new IntentGroup ();
+		this.intentGroup.writePeriod = App.INTENT_WRITE_PERIOD;
 
-		this.isConnectingLinkClient = false;
-		this.isLinkClientConnected = false;
-		this.linkClient = null;
-		this.linkClientUrl = null;
-
-		this.updateLinkClientTask = new RepeatTask ();
-		this.sendLinkServerBroadcastTask = new RepeatTask ();
-		this.publishStatusEventTask = new RepeatTask ();
-		this.linkClientConnectCallbacks = [ ];
-		this.linkClientDisconnectCallbacks = [ ];
+		this.dataStore = null;
+		this.dataStoreRunCount = 0;
+		this.runDataStoreTask = new RepeatTask ();
+		this.runDataStoreEventEmitter = new EventEmitter ();
+		this.runDataStoreEventEmitter.setMaxListeners (0);
 	}
 
 	// Start the agent's operation and invoke the provided callback when complete, with an "err" parameter (non-null if an error occurred)
-	start (startCallback) {
-		var agent, serverindex, pos, i, server, serverconfigs, c;
+	start (startCompleteCallback) {
+		let pos, server, serverconfigs;
 
-		agent = this;
-		if (agent.isStarted) {
+		if (this.isStarted) {
 			process.nextTick (function () {
-				startCallback (null);
+				startCompleteCallback (null);
 			});
 			return;
 		}
 
-		agent.isEnabled = App.AGENT_ENABLED;
-		agent.applicationName = App.AGENT_APPLICATION_NAME;
+		this.isEnabled = App.AGENT_ENABLED;
+		this.applicationName = App.AGENT_APPLICATION_NAME;
 
 		if (App.AGENT_DISPLAY_NAME != null) {
-			agent.displayName = App.AGENT_DISPLAY_NAME;
+			this.displayName = App.AGENT_DISPLAY_NAME;
 		}
 		else {
-			agent.displayName = Os.hostname ();
-			pos = agent.displayName.indexOf (".");
+			this.displayName = Os.hostname ();
+			pos = this.displayName.indexOf (".");
 			if (pos > 0) {
-				agent.displayName = agent.displayName.substring (0, pos);
+				this.displayName = this.displayName.substring (0, pos);
 			}
 		}
 
 		if (process.platform == "win32") {
-			// TODO: Possibly set agent.platform to "win64"
-			agent.platform = "win32";
+			// TODO: Possibly set this.platform to "win64" if appropriate
+			this.platform = "win32";
 		}
 		else if (process.platform == "darwin") {
-			agent.platform = "macos";
+			this.platform = "macos";
 		}
 		else if (process.platform == "linux") {
-			agent.platform = "linux";
+			this.platform = "linux";
 		}
 
 		serverconfigs = FsUtil.readConfigFile ("conf/server.conf");
@@ -133,142 +169,99 @@ class SystemAgent {
 			serverconfigs = [ ];
 		}
 		if (serverconfigs.length <= 0) {
-			process.nextTick (function () {
-				startCallback ("No server types configured");
+			process.nextTick (() => {
+				startCompleteCallback ("No server types configured");
 			});
 			return;
 		}
 
-		for (i = 0; i < serverconfigs.length; ++i) {
-			c = serverconfigs[i];
-			if (Server.ServerTypes[c.type] == null) {
-				process.nextTick (function () {
-					startCallback ("Unknown server type \"" + c.type + "\"");
+		for (let config of serverconfigs) {
+			if (Server.ServerTypes[config.type] == null) {
+				process.nextTick (() => {
+					startCompleteCallback (`Unknown server type "${config.type}"`);
 				});
 				return;
 			}
 
-			server = new Server.ServerTypes[c.type] ();
-			server.baseConfiguration = c.params;
-			agent.serverList.push (server);
+			server = new Server.ServerTypes[config.type] ();
+			server.baseConfiguration = config.params;
+			this.serverList.push (server);
 		}
 
-		agent.startTime = new Date ().getTime ();
-		FsUtil.createDirectory (agent.dataPath, createDirectoryComplete);
-		function createDirectoryComplete (err) {
-			if (err != null) {
-				startCallback (err);
-				return;
-			}
-			FsUtil.readStateFile (agent.runStatePath, readStateComplete);
-		}
+		this.startTime = new Date ().getTime ();
 
-		function readStateComplete (err, stateData) {
-			if ((err != null) || (stateData == null)) {
-				agent.agentId = UuidV4 ();
-				agent.runState.agentId = agent.agentId;
-				FsUtil.writeStateFile (agent.runStatePath, agent.runState, writeStateComplete);
-				return;
+		FsUtil.createDirectory (this.dataPath).then (() => {
+			return (FsUtil.readStateFile (this.runStatePath));
+		}).then ((state) => {
+			if (state == null) {
+				this.agentId = UuidV4 ();
+				Log.debug (`Assign agent ID; id=${this.agentId}`);
+				this.runState.agentId = this.agentId;
+				return (FsUtil.writeStateFile (this.runStatePath, this.runState));
 			}
+			this.runState = state;
 
-			agent.runState = stateData;
-			Log.write (Log.DEBUG, "Read agent state; path=\"" + agent.runStatePath + "\" state=" + JSON.stringify (agent.runState));
-			if (typeof agent.runState.agentId != "string") {
-				agent.agentId = UuidV4 ();
-				agent.runState.agentId = agent.agentId;
-				FsUtil.writeStateFile (agent.runStatePath, agent.runState, writeStateComplete);
-				return;
+			if (typeof this.runState.agentId != "string") {
+				this.agentId = UuidV4 ();
+				Log.debug (`Assign agent ID; id=${this.agentId}`);
+				this.runState.agentId = this.agentId;
+				return (FsUtil.writeStateFile (this.runStatePath, this.runState));
 			}
 
-			agent.agentId = agent.runState.agentId;
-			if (agent.runState.agentConfiguration != null) {
-				if (typeof agent.runState.agentConfiguration.isEnabled == "boolean") {
-					agent.isEnabled = agent.runState.agentConfiguration.isEnabled;
+			this.agentId = this.runState.agentId;
+			if (this.runState.agentConfiguration != null) {
+				if (typeof this.runState.agentConfiguration.isEnabled == "boolean") {
+					this.isEnabled = this.runState.agentConfiguration.isEnabled;
 				}
-				if ((typeof agent.runState.agentConfiguration.displayName == "string") && (agent.runState.agentConfiguration.displayName != "")) {
-					agent.displayName = agent.runState.agentConfiguration.displayName;
+				if ((typeof this.runState.agentConfiguration.displayName == "string") && (this.runState.agentConfiguration.displayName != "")) {
+					this.displayName = this.runState.agentConfiguration.displayName;
 				}
 			}
-			writeStateComplete (null);
-		}
-
-		function writeStateComplete (err) {
-			if (err != null) {
-				Log.write (Log.WARNING, "Failed to write agent state; path=\"" + agent.runStatePath + "\" err=" + err);
+		}).then (() => {
+			if (this.isEnabled) {
+				return (this.startAllServers ());
 			}
+		}).then (() => {
+			return (this.startMainHttpServer ());
+		}).then (() => {
+			this.accessControl.start ();
+			this.taskGroup.start ();
+			this.intentGroup.start ();
+			if (Object.keys (this.secondaryRequestHandlerMap).length > 0) {
+				return (this.startSecondaryHttpServer ());
+			}
+		}).then (() => {
+			if (this.dataStoreRunCount > 0) {
+				this.dataStore = new DataStore (App.MONGOD_PATH, this.dataPath + "/records", App.STORE_PORT);
+				return (this.dataStore.run ());
+			}
+		}).then (() => {
+			let path;
 
-			startHttpServer ();
-		}
-
-		function startHttpServer () {
-			agent.httpServer = Http.createServer (function (request, response) {
-				agent.handleRequest (request, response);
+			path = App.AUTHORIZE_PATH;
+			if (path.indexOf ("/") != 0) {
+				path = "/" + path;
+			}
+			this.addInvokeRequestHandler (path, SystemInterface.Constant.DefaultCommandType, (cmdInv) => {
+				switch (cmdInv.command) {
+					case SystemInterface.CommandId.Authorize: {
+						return (this.accessControl.authorize (cmdInv));
+					}
+				}
 			});
 
-			agent.httpServer.on ("error", function (err) {
-				Log.write (Log.ERR, "HTTP server error: " + err);
-				if (! agent.isStarted) {
-					startCallback (err);
-				}
-			});
-
-			agent.httpServer.listen (App.TCP_PORT, null, 1024, httpServerListenComplete);
-		}
-
-		function httpServerListenComplete (err) {
-			var address;
-
-			if (err != null) {
-				startCallback (err);
-				return;
-			}
-
-			address = agent.httpServer.address ();
-			if (typeof address.port != "number") {
-				startCallback ("Internal error: failed to read listen port from HTTP server");
-				return;
-			}
-
-			agent.httpServerPort = address.port;
-			agent.resetUrlHostname ();
-			Log.write (Log.INFO, "HTTP server listening; address=" + agent.urlHostname + ":" + agent.httpServerPort);
-
-			if (! agent.isEnabled) {
-				startServersComplete ();
-				return;
-			}
-
-			agent.startAllServers (startServersComplete);
-		}
-
-		function startServersComplete () {
-			agent.addInvokeRequestHandler ("/", SystemInterface.Constant.DefaultCommandType, function (cmdInv) {
+			this.addInvokeRequestHandler (SystemInterface.Constant.DefaultInvokePath, SystemInterface.Constant.DefaultCommandType, (cmdInv) => {
 				switch (cmdInv.command) {
 					case SystemInterface.CommandId.GetStatus: {
-						return (agent.getStatus ());
-					}
-					case SystemInterface.CommandId.AgentStatus: {
-						if (agent.isConnectingLinkClient && (agent.linkClientUrl == null)) {
-							if (cmdInv.params.linkServerStatus != null) {
-								agent.linkClientUrl = cmdInv.params.linkServerStatus.linkUrl;
-								Log.write (Log.DEBUG, "Found link server; url=\"" + agent.linkClientUrl + "\"");
-								agent.sendLinkServerBroadcastTask.stopRepeat ();
-							}
-						}
-
-						return (SystemInterface.createCommand (agent.getCommandPrefix (), "CommandResult", SystemInterface.Constant.DefaultCommandType, {
-							success: true
-						}));
+						return (this.getStatus ());
 					}
 					case SystemInterface.CommandId.GetAgentConfiguration: {
-						return (agent.getConfiguration ());
+						return (this.getConfiguration ());
 					}
 					case SystemInterface.CommandId.UpdateAgentConfiguration: {
 						let err, c;
-
-						Log.write (Log.INFO, "Update agent configuration; cmdInv=" + JSON.stringify (cmdInv));
 						err = false;
-						for (let server of agent.serverList) {
+						for (let server of this.serverList) {
 							c = cmdInv.params.agentConfiguration[server.getAgentConfigurationKey ()];
 							if ((typeof c == "object") && (c != null)) {
 								if (! server.isConfigurationValid (c)) {
@@ -278,72 +271,72 @@ class SystemAgent {
 							}
 						}
 						if (err) {
-							return (SystemInterface.createCommand (agent.getCommandPrefix (), "CommandResult", SystemInterface.Constant.DefaultCommandType, {
+							return (SystemInterface.createCommand (this.getCommandPrefix (), "CommandResult", SystemInterface.Constant.DefaultCommandType, {
 								success: false,
 								error: "Invalid configuration parameters"
 							}));
 						}
 
-						if ((typeof agent.runState.agentConfiguration != "object") || (agent.runState.agentConfiguration == null)) {
-							agent.runState.agentConfiguration = { };
+						if ((typeof this.runState.agentConfiguration != "object") || (this.runState.agentConfiguration == null)) {
+							this.runState.agentConfiguration = { };
 						}
-						for (let server of agent.serverList) {
+						for (let server of this.serverList) {
 							c = cmdInv.params.agentConfiguration[server.getAgentConfigurationKey ()];
 							if ((typeof c == "object") && (c != null)) {
 								server.configure (c);
-								agent.runState.agentConfiguration[server.getAgentConfigurationKey ()] = c;
+								this.runState.agentConfiguration[server.getAgentConfigurationKey ()] = c;
 							}
 						}
 
-						agent.displayName = cmdInv.params.agentConfiguration.displayName;
-						agent.runState.agentConfiguration.displayName = agent.displayName;
+						this.displayName = cmdInv.params.agentConfiguration.displayName;
+						this.runState.agentConfiguration.displayName = this.displayName;
 
-						if ((typeof cmdInv.params.agentConfiguration.isEnabled == "boolean") && (cmdInv.params.agentConfiguration.isEnabled != agent.isEnabled)) {
-							agent.isEnabled = cmdInv.params.agentConfiguration.isEnabled;
-							agent.runState.agentConfiguration.isEnabled = agent.isEnabled;
+						if ((typeof cmdInv.params.agentConfiguration.isEnabled == "boolean") && (cmdInv.params.agentConfiguration.isEnabled != this.isEnabled)) {
+							this.isEnabled = cmdInv.params.agentConfiguration.isEnabled;
+							this.runState.agentConfiguration.isEnabled = this.isEnabled;
 
-							if (agent.isEnabled) {
-								agent.startAllServers (() => { });
+							if (this.isEnabled) {
+								this.startAllServers (() => { });
 							}
 							else {
-								agent.stopAllServers (() => { });
+								this.stopAllServers (() => { });
 							}
 						}
 
-						FsUtil.writeStateFile (agent.runStatePath, agent.runState, function (err) {
+						FsUtil.writeStateFile (this.runStatePath, this.runState, function (err) {
 							if (err != null) {
-								Log.write (Log.ERR, `Failed to write run state; path=${agent.runStatePath} err=${err}`);
+								Log.err (`Failed to write run state; path=${this.runStatePath} err=${err}`);
 							}
 						});
-						return (agent.getConfiguration ());
+						return (this.getConfiguration ());
 					}
 					case SystemInterface.CommandId.ShutdownAgent: {
-						Log.write (Log.NOTICE, "Shutdown agent by remote command");
+						Log.notice ("Shutdown application by remote command");
 
-						agent.stopAllServers (() => {
+						this.stopAllServers (() => {
 							process.exit (0);
 						});
-						return (SystemInterface.createCommand (agent.getCommandPrefix (), "CommandResult", SystemInterface.Constant.DefaultCommandType, {
+						return (SystemInterface.createCommand (this.getCommandPrefix (), "CommandResult", SystemInterface.Constant.DefaultCommandType, {
 							success: true
 						}));
 					}
 					case SystemInterface.CommandId.StartServers: {
-						Log.write (Log.NOTICE, "Start all servers by remote command");
-						agent.startAllServers (() => { });
-						return (SystemInterface.createCommand (agent.getCommandPrefix (), "CommandResult", SystemInterface.Constant.DefaultCommandType, {
+						Log.notice ("Start all servers by remote command");
+						this.startAllServers (() => { });
+						return (SystemInterface.createCommand (this.getCommandPrefix (), "CommandResult", SystemInterface.Constant.DefaultCommandType, {
 							success: true
 						}));
 					}
 					case SystemInterface.CommandId.StopServers: {
-						Log.write (Log.NOTICE, "Stop all servers by remote command");
-						agent.stopAllServers (() => { });
-						return (SystemInterface.createCommand (agent.getCommandPrefix (), "CommandResult", SystemInterface.Constant.DefaultCommandType, {
+						Log.notice ("Stop all servers by remote command");
+						this.stopAllServers (() => { });
+						return (SystemInterface.createCommand (this.getCommandPrefix (), "CommandResult", SystemInterface.Constant.DefaultCommandType, {
 							success: true
 						}));
 					}
 					case SystemInterface.CommandId.CancelTask: {
-						agent.cancelTask (cmdInv);
-						return (SystemInterface.createCommand (agent.getCommandPrefix (), "CommandResult", SystemInterface.Constant.DefaultCommandType, {
+						this.taskGroup.cancelTask (cmdInv);
+						return (SystemInterface.createCommand (this.getCommandPrefix (), "CommandResult", SystemInterface.Constant.DefaultCommandType, {
 							success: true
 						}));
 					}
@@ -352,83 +345,327 @@ class SystemAgent {
 				return (null);
 			});
 
-			agent.updateDatagramSocketTask.setRepeating (function (callback) {
-				agent.updateDatagramSocket (callback);
+			this.addLinkCommandHandler (SystemInterface.Constant.Admin, (client, cmdInv) => {
+				switch (cmdInv.command) {
+					case SystemInterface.CommandId.ReadTasks: {
+						this.taskGroup.readTasks (client, cmdInv);
+						break;
+					}
+					case SystemInterface.CommandId.WatchTasks: {
+						this.taskGroup.watchTasks (client, cmdInv);
+						break;
+					}
+				}
+			});
+
+			this.updateDatagramSocketTask.setRepeating ((callback) => {
+				this.updateDatagramSocket (callback);
 			}, App.HEARTBEAT_PERIOD * 8, App.HEARTBEAT_PERIOD * 16);
 
-			agent.updateTaskMapTask.setRepeating (function (callback) {
-				agent.updateTaskMap (callback);
-			}, App.HEARTBEAT_PERIOD, App.HEARTBEAT_PERIOD * 2);
-			agent.isStarted = true;
-			startCallback (null);
+			if (this.dataStoreRunCount > 0) {
+				this.runDataStoreEventEmitter.emit (START_EVENT);
+				this.runDataStoreTask.setRepeating ((callback) => {
+					this.runDataStoreProcess (callback);
+				}, App.STORE_RUN_PERIOD * 1000, App.STORE_RUN_PERIOD * 1000);
+			}
+
+			this.isStarted = true;
+			startCompleteCallback ();
+		}).catch ((err) => {
+			this.accessControl.stop ();
+			this.taskGroup.stop ();
+			this.intentGroup.stop ();
+			startCompleteCallback (err);
+		});
+	}
+
+	// Return a promise that starts the main HTTP server if it isn't already running
+	startMainHttpServer () {
+		return (new Promise ((resolve, reject) => {
+			let http, options, io, listenError, listenComplete, ioConnection;
+
+			if (this.httpServer1 != null) {
+				resolve ();
+				return;
+			}
+
+			options = { };
+			if (App.ENABLE_HTTPS) {
+				try {
+					options = {
+						key: Fs.readFileSync ("conf/tls-key.pem"),
+						cert: Fs.readFileSync ("conf/tls-cert.pem")
+					};
+				}
+				catch (e) {
+					reject (Error (e));
+					return;
+				}
+			}
+
+			if (App.ENABLE_HTTPS) {
+				http = Https.createServer (options, (request, response) => {
+					this.handleMainServerRequest (request, response);
+				});
+			}
+			else {
+				http = Http.createServer ((request, response) => {
+					this.handleMainServerRequest (request, response);
+				});
+			}
+			this.httpServer1 = http;
+
+			setTimeout (() => {
+				http.on ("error", listenError);
+				http.listen (App.TCP_PORT1, null, 1024, listenComplete);
+			}, 0);
+
+			listenError = (err) => {
+				http.removeListener ("error", listenError);
+				reject (Error (err));
+			};
+
+			listenComplete = () => {
+				let address;
+
+				http.removeListener ("error", listenError);
+				address = http.address ();
+				if (typeof address.port != "number") {
+					reject ("Internal error: failed to read listen port from HTTP server");
+					return;
+				}
+
+				this.httpServerPort1 = address.port;
+				this.resetUrlHostname ();
+				Log.debug (`HTTP-1 listening; address=${this.urlHostname}:${this.httpServerPort1}`);
+				http.on ("error", (err) => {
+					Log.err (`HTTP-1 error; err=${err}`);
+				});
+
+				http.on ("close", () => {
+					if (this.httpServer1 == http) {
+						this.httpServer1 = null;
+					}
+				});
+
+				io = Io.listen (http, { "path": this.linkPath });
+				io.on ("connection", ioConnection);
+
+				resolve ();
+			};
+
+			ioConnection = (client) => {
+				let clientaddress;
+
+				clientaddress = client.request.connection.remoteAddress;
+				Log.debug (`WebSocket client connected; address="${clientaddress}"`);
+
+				client.on ("disconnect", () => {
+					Log.debug (`WebSocket client disconnected; address="${clientaddress}"`);
+				});
+
+				client.on (SystemInterface.Constant.WebSocketEvent, (cmdInv) => {
+					let err, fn;
+
+					err = SystemInterface.parseCommand (cmdInv);
+					if (SystemInterface.isError (err)) {
+						Log.debug (`Discard WebSocket command; address=${clientaddress} cmdInv=${JSON.stringify (cmdInv)} err=${err}`);
+						return;
+					}
+
+					fn = this.linkCommandHandlerMap[cmdInv.commandType];
+					if (typeof fn == "function") {
+						if (App.AUTHORIZE_SECRET != "") {
+							if (! this.accessControl.isCommandAuthorized (cmdInv)) {
+								Log.debug (`Discard WebSocket command (unauthorized); address=${clientaddress}`);
+								return;
+							}
+						}
+
+						fn (client, cmdInv);
+					}
+				});
+			};
+		}));
+	}
+
+	// Return a promise that starts the secondary HTTP server if it isn't already running
+	startSecondaryHttpServer () {
+		return (new Promise ((resolve, reject) => {
+			let http, listenError, listenComplete;
+
+			if (this.httpServer2 != null) {
+				resolve ();
+				return;
+			}
+			http = Http.createServer ((request, response) => {
+				this.handleSecondaryServerRequest (request, response);
+			});
+			this.httpServer2 = http;
+
+			setTimeout (() => {
+				http.on ("error", listenError);
+				http.listen (App.TCP_PORT2, null, 1024, listenComplete);
+			}, 0);
+
+			listenError = (err) => {
+				http.removeListener ("error", listenError);
+				reject (Error (err));
+			};
+
+			listenComplete = () => {
+				let address;
+
+				http.removeListener ("error", listenError);
+				address = http.address ();
+				if (typeof address.port != "number") {
+					reject ("Internal error: failed to read listen port from HTTP server");
+					return;
+				}
+
+				this.httpServerPort2 = address.port;
+				Log.debug (`HTTP-2 listening; address=${this.urlHostname}:${this.httpServerPort2}`);
+				http.on ("error", (err) => {
+					Log.err (`HTTP-2 error; err=${err}`);
+				});
+
+				http.on ("close", () => {
+					if (this.httpServer2 == http) {
+						this.httpServer2 = null;
+					}
+				});
+
+				resolve ();
+			};
+		}));
+	}
+
+	// Start all servers and invoke the provided callback when complete. If a callback is not provided, instead return a promise that resolves if the operation succeeds or rejects if it doesn't.
+	startAllServers (startCompleteCallback) {
+		let execute = (executeCallback) => {
+			let startServer, state;
+
+			if (! this.isEnabled) {
+				process.nextTick (() => {
+					executeCallback ("Agent is not enabled for operation");
+				});
+				return;
+			}
+
+			for (let server of this.serverList) {
+				if (server.isRunning) {
+					process.nextTick (() => {
+						executeCallback (`${server.name} is already running`);
+					});
+					return;
+				}
+			}
+
+			state = { };
+			if ((typeof this.runState.agentConfiguration == "object") && (this.runState.agentConfiguration != null)) {
+				state = SystemInterface.parseTypeObject ("AgentConfiguration", this.runState.agentConfiguration);
+				if (SystemInterface.isError (state)) {
+					Log.err (`Failed to parse stored server configuration; err=${state}`);
+					state = { };
+				}
+			}
+			for (let server of this.serverList) {
+				server.configure (state[server.getAgentConfigurationKey ()]);
+				if (! server.isConfigured) {
+					process.nextTick (() => {
+						executeCallback (`${server.name} is not configured`);
+					});
+					return;
+				}
+			}
+
+			startServer = (item, callback) => {
+				item.start ((err) => {
+					if (err != null) {
+						Log.err (`Failed to start server; name=${item.name} err=${err.stack}`);
+					}
+					callback (err);
+				});
+			};
+			Async.eachSeries (this.serverList, startServer, executeCallback);
+		};
+
+		if (typeof startCompleteCallback == "function") {
+			execute (startCompleteCallback);
+		}
+		else {
+			return (new Promise ((resolve, reject) => {
+				execute ((err) => {
+					if (err != null) {
+						reject (Error (err));
+						return;
+					}
+					resolve ();
+				});
+			}));
 		}
 	}
 
-	// Start all servers and invoke the provided callback when complete
-	startAllServers (startCallback) {
-		let startServer, state;
+	// Stop the agent's operation and invoke the provided callback when complete
+	stop (stopCallback) {
+		let stopServersComplete, writeStateComplete, stopHttp1Complete, stopHttp2Complete;
 
-		if (! this.isEnabled) {
-			process.nextTick (() => {
-				startCallback (`Agent is not enabled for operation`);
-			});
-			return;
-		}
+		this.accessControl.stop ();
+		this.taskGroup.stop ();
+		this.intentGroup.stop ();
 
-		for (let server of this.serverList) {
-			if (server.isRunning) {
-				process.nextTick (() => {
-					startCallback (`${server.name} is already running`);
-				});
-				return;
+		setTimeout (() => {
+			this.stopAllServers (stopServersComplete);
+		}, 0);
+		stopServersComplete = () => {
+			if (! this.isStarted) {
+				writeStateComplete ();
 			}
-		}
-
-		state = { };
-		if ((typeof this.runState.agentConfiguration == "object") && (this.runState.agentConfiguration != null)) {
-			state = SystemInterface.parseTypeObject ("AgentConfiguration", this.runState.agentConfiguration);
-			if (SystemInterface.isError (state)) {
-				Log.write (Log.ERR, `Failed to parse stored server configuration; err${state}`);
-				state = { };
+			else {
+				this.intentGroup.writeState (writeStateComplete);
 			}
-		}
-		for (let server of this.serverList) {
-			server.configure (state[server.getAgentConfigurationKey ()]);
-			if (! server.isConfigured) {
-				process.nextTick (() => {
-					startCallback (`${server.name} is not configured`);
-				});
-				return;
-			}
-		}
-
-		startServer = (item, callback) => {
-			item.start (callback);
 		};
-		Async.eachSeries (this.serverList, startServer, startCallback);
+		writeStateComplete = () => {
+			if (this.httpServer1 == null) {
+				stopHttp1Complete ();
+			}
+			else {
+				this.httpServer1.close (stopHttp1Complete);
+			}
+		};
+		stopHttp1Complete = () => {
+			if (this.httpServer2 == null) {
+				stopHttp2Complete ();
+			}
+			else {
+				this.httpServer2.close (stopHttp2Complete);
+			}
+		};
+		stopHttp2Complete = () => {
+			stopCallback ();
+		};
 	}
 
 	// Stop all servers and invoke the provided callback when complete
 	stopAllServers (callback) {
-		var agent, serverindex;
+		let stopNextServer, stopComplete, serverindex;
 
-		agent = this;
-		serverindex = 0;
-		stopNextServer ();
-
-		function stopNextServer () {
-			if (serverindex >= agent.serverList.length) {
+		stopNextServer = () => {
+			if (serverindex >= this.serverList.length) {
 				callback ();
 				return;
 			}
 
-			agent.serverList[serverindex].stop (stopComplete);
-		}
+			this.serverList[serverindex].stop (stopComplete);
+		};
 
-		function stopComplete () {
+		stopComplete = () => {
 			++serverindex;
 			stopNextServer ();
-		}
+		};
+
+		serverindex = 0;
+		stopNextServer ();
 	}
 
 	// Reset the urlHostname value as appropriate for configured values and detected interfaces
@@ -444,13 +681,7 @@ class SystemAgent {
 		interfaces = Os.networkInterfaces ();
 		for (let i in interfaces) {
 			addresses = interfaces[i];
-			if (App.ENABLE_VERBOSE_LOGGING) {
-				Log.write (Log.DEBUG4, "Found network interface; name=" + i + " addressCount=" + addresses.length + " interfaceCount=" + Object.keys (interfaces).length);
-			}
 			for (let addr of addresses) {
-				if (App.ENABLE_VERBOSE_LOGGING) {
-					Log.write (Log.DEBUG4, "Found network address; name=" + i + " address=" + addr.address + " netmask=" + addr.netmask + " family=" + addr.family + " mac=" + addr.mac + " internal=" + addr.internal);
-				}
 				if (addr.internal) {
 					continue;
 				}
@@ -479,32 +710,104 @@ class SystemAgent {
 		}
 	}
 
-	// Handle an HTTP request received by the server
-	handleRequest (request, response) {
-		var agent, path, url, address, body, q;
+	// Return the server object with the specified name, or null if no such server was found
+	getServer (serverName) {
+		for (let server of this.serverList) {
+			if (server.name == serverName) {
+				return (server);
+			}
+		}
 
-		agent = this;
+		return (null);
+	}
+
+  // Add a task to the agent's run queue, assigning its ID value in the process. If endCallback is provided, set the task to invoke that function when it completes.
+	runTask (task, endCallback) {
+		this.taskGroup.runTask (task, endCallback);
+	}
+
+  // Add an intent to the agent's intent group, applying an optional group name value for identification
+	runIntent (intent, groupName) {
+		if (typeof groupName == "string") {
+			intent.groupName = groupName;
+		}
+		this.intentGroup.runIntent (intent);
+	}
+
+	// Return an array containing all intent items matching the specified group name and optional active state
+	findIntents (groupName, isActive) {
+		return (this.intentGroup.findIntents (groupName, isActive));
+	}
+
+	// Halt and remove all intents matching the specified group name
+	removeIntentGroup (groupName) {
+		this.intentGroup.removeIntentGroup (groupName);
+	}
+
+	// Handle a request received by the main HTTP server
+	handleMainServerRequest (request, response) {
+		let path, url, address, body, q, execute;
+
 		address = request.socket.remoteAddress + ":" + request.socket.remotePort;
 		path = null;
 		url = Url.parse (request.url);
 		if (url != null) {
 			path = url.pathname;
 		}
-
-		if (App.ENABLE_VERBOSE_LOGGING) {
-			Log.write (Log.DEBUG3, "HTTP client request begin; address=\"" + address + "\" method=" + request.method + " path=\"" + path + "\"");
-		}
-
 		if (path == null) {
-			Log.write (Log.DEBUG2, "HTTP client \"" + address + "\" 404/Not found, no path");
-			agent.endRequest (request, response, 404, "Not found");
+			this.endRequest (request, response, 404, "Not found");
 			return;
 		}
 
+		execute = (body) => {
+			let cmdinv, fn, responsedata, buffer;
+			fn = this.mainRequestHandlerMap[path];
+			if (fn != null) {
+				cmdinv = SystemInterface.parseCommand (body);
+				if (SystemInterface.isError (cmdinv)) {
+					cmdinv = { };
+				}
+				fn (cmdinv, request, response);
+				return;
+			}
+
+			cmdinv = SystemInterface.parseCommand (body);
+			if (SystemInterface.isError (cmdinv)) {
+				this.endRequest (request, response, 400, "Bad request");
+				return;
+			}
+
+			fn = this.invokeRequestHandlerMap[cmdinv.commandType + ":" + path];
+			if (fn != null) {
+				if ((App.AUTHORIZE_SECRET != "") && (cmdinv.command != SystemInterface.CommandId.Authorize)) {
+					if (! this.accessControl.isCommandAuthorized (cmdinv)) {
+						this.endRequest (request, response, 401, "Unauthorized");
+						return;
+					}
+				}
+
+				responsedata = fn (cmdinv);
+				if (responsedata == null) {
+					this.endRequest (request, response, 200, "");
+					return;
+				}
+
+				if (typeof responsedata != "object") {
+					this.endRequest (request, response, 500, "Internal server error");
+					return;
+				}
+
+				buffer = Buffer.from (JSON.stringify (responsedata), "UTF-8");
+				this.endRequest (request, response, 200, buffer);
+				return;
+			}
+			this.endRequest (request, response, 404, "Not found");
+		};
+
 		if (request.method == "GET") {
 			q = QueryString.parse (url.query);
-			if (typeof q.json == "string") {
-				execute (q.json);
+			if (typeof q[SystemInterface.Constant.UrlQueryParameter] == "string") {
+				execute (q[SystemInterface.Constant.UrlQueryParameter]);
 			}
 			else {
 				execute (q);
@@ -512,74 +815,69 @@ class SystemAgent {
 		}
 		else if (request.method == "POST") {
 			body = [ ];
-			request.on ("data", function (chunk) {
-				if (App.ENABLE_VERBOSE_LOGGING) {
-					Log.write (Log.DEBUG4, "HTTP client body data; address=\"" + address + "\" method=" + request.method + " path=\"" + path + "\" bodyLength=" + body.length);
-				}
-
+			request.on ("data", (chunk) => {
 				body.push (chunk);
 			});
-			request.on ("end", function () {
+			request.on ("end", () => {
 				body = Buffer.concat (body).toString ();
-				if (App.ENABLE_VERBOSE_LOGGING) {
-					Log.write (Log.DEBUG4, "HTTP client body end; address=\"" + address + "\" method=" + request.method + " path=\"" + path + "\" bodyLength=" + body.length);
-				}
-
 				execute (body);
 			});
 		}
 		else {
-			agent.endRequest (request, response, 405, "Method not allowed");
+			this.endRequest (request, response, 405, "Method not allowed");
+		}
+	}
+
+	// Handle a request received by the secondary HTTP server
+	handleSecondaryServerRequest (request, response) {
+		let path, url, address, body, q, execute;
+
+		address = request.socket.remoteAddress + ":" + request.socket.remotePort;
+		path = null;
+		url = Url.parse (request.url);
+		if (url != null) {
+			path = url.pathname;
+		}
+		if (path == null) {
+			this.endRequest (request, response, 404, "Not found");
+			return;
 		}
 
-		function execute (body) {
-			var cmdinv, fn, responsedata, buffer;
-
-			if (App.ENABLE_VERBOSE_LOGGING) {
-				Log.write (Log.DEBUG4, "HTTP client request execute; address=\"" + address + "\" method=" + request.method + " path=\"" + path + "\" body=" + JSON.stringify (body));
-			}
-
-			cmdinv = SystemInterface.parseCommand (body);
-			if (SystemInterface.isError (cmdinv)) {
-				Log.write (Log.DEBUG2, "HTTP client request parse error; address=\"" + address + "\" method=" + request.method + " path=\"" + path + "\" body=" + JSON.stringify (body) + " err=\"" + cmdinv + "\"");
-				agent.endRequest (request, response, 400, "Bad request");
-				return;
-			}
-
-			fn = agent.invokeRequestHandlerMap[cmdinv.commandType + ":" + path];
-			if (App.ENABLE_VERBOSE_LOGGING) {
-				Log.write (Log.DEBUG4, "HTTP client request find invoke handler; address=\"" + address + "\" method=" + request.method + " path=\"" + path + "\" body=" + JSON.stringify (body) + " fn=" + ((fn != null) ? "true" : "false") + " commandType=" + cmdinv.commandType);
-			}
+		execute = (body) => {
+			let cmdinv, fn;
+			fn = this.secondaryRequestHandlerMap[path];
 			if (fn != null) {
-				responsedata = fn (cmdinv);
-				if (responsedata == null) {
-					Log.write (Log.DEBUG2, "HTTP client \"" + address + "\" path \"" + path + "\" 200/OK, empty response data");
-					agent.endRequest (request, response, 200, "");
-					return;
+				cmdinv = SystemInterface.parseCommand (body);
+				if (SystemInterface.isError (cmdinv)) {
+					cmdinv = { };
 				}
-
-				if (typeof responsedata != "object") {
-					Log.write (Log.DEBUG2, "HTTP client \"" + address + "\" path \"" + path + "\" 500/Internal server error, invalid responsedata object " + JSON.stringify (responsedata));
-					agent.endRequest (request, response, 500, "Internal server error");
-					return;
-				}
-
-				buffer = Buffer.from (JSON.stringify (responsedata), "UTF-8");
-				Log.write (Log.DEBUG2, `HTTP request complete; response=200/OK client=${address} path=${path} responseLength=${buffer.length} command=${cmdinv.commandName} responseCommand=${responsedata.commandName}`);
-				agent.endRequest (request, response, 200, buffer);
-				return;
-			}
-
-			fn = agent.requestHandlerMap[path];
-			if (App.ENABLE_VERBOSE_LOGGING) {
-				Log.write (Log.DEBUG4, "HTTP client request find path handler; address=\"" + address + "\" method=" + request.method + " path=\"" + path + "\" body=" + JSON.stringify (body) + " fn=" + ((fn != null) ? "true" : "false"));
-			}
-			if (fn != null) {
 				fn (cmdinv, request, response);
 				return;
 			}
-			Log.write (Log.DEBUG2, "HTTP client \"" + address + "\" 404/Not found, path \"" + path + "\" not found");
-			agent.endRequest (request, response, 404, "Not found");
+			this.endRequest (request, response, 404, "Not found");
+		};
+
+		if (request.method == "GET") {
+			q = QueryString.parse (url.query);
+			if (typeof q[SystemInterface.Constant.UrlQueryParameter] == "string") {
+				execute (q[SystemInterface.Constant.UrlQueryParameter]);
+			}
+			else {
+				execute (q);
+			}
+		}
+		else if (request.method == "POST") {
+			body = [ ];
+			request.on ("data", (chunk) => {
+				body.push (chunk);
+			});
+			request.on ("end", () => {
+				body = Buffer.concat (body).toString ();
+				execute (body);
+			});
+		}
+		else {
+			this.endRequest (request, response, 405, "Method not allowed");
 		}
 	}
 
@@ -594,9 +892,9 @@ class SystemAgent {
 		response.end ();
 	}
 
-	// Set a request handler for the specified path. If a request with this path is received, the handler function is invoked with "request" and "response" objects.
-	addRequestHandler (path, handler) {
-		this.requestHandlerMap[path] = handler;
+	// Set a request handler for the specified path. If a request with this path is received on the main HTTP server, the handler function is invoked with "request" and "response" objects.
+	addMainRequestHandler (path, handler) {
+		this.mainRequestHandlerMap[path] = handler;
 	}
 
 	// Set an invocation handler for the specified path and command type. If a matching request is received, the handler function is invoked with a "cmdInv" parameter (a SystemInterface command invocation object). The handler function is expected to return a command invocation object to be included in a response to the caller, or null if no such invocation is needed.
@@ -604,105 +902,115 @@ class SystemAgent {
 		this.invokeRequestHandlerMap[commandType + ":" + path] = handler;
 	}
 
-	// Set a call handler for the specified command type. If an event command with this type is received, the handler function is invoked with the "cmdInv" object.
+	// Set a request handler for the specified path. If a request with this path is received on the secondary HTTP server, the handler function is invoked with "request" and "response" objects.
+	addSecondaryRequestHandler (path, handler) {
+		this.secondaryRequestHandlerMap[path] = handler;
+		if (this.isStarted && (this.httpServer2 == null)) {
+			this.startSecondaryHttpServer ().then (() => { });
+		}
+	}
+
+	// Set a handler for the specified command type. If a matching request is received, the handler function is invoked with "client" (a socket.io client) and "cmdInv" (a SystemInterface command invocation object) parameters.
 	addLinkCommandHandler (commandType, handler) {
-		this.linkCommandTypeMap[commandType] = handler;
+		this.linkCommandHandlerMap[commandType] = handler;
 	}
 
-	// Enable the agent's linkClient object, causing it to maintain contact to available LinkServer agents. If connectCallback and disconnectCallback are provided, they are invoked when the linkClient connect becomes available or unavailable.
-	connectLinkClient (connectCallback, disconnectCallback) {
-		var agent;
-
-		agent = this;
-		if (typeof connectCallback == "function") {
-			agent.linkClientConnectCallbacks.push (connectCallback);
+	// Notify the agent that it should maintain a running data store process. If runCallback is provided, invoke it the next time the data store becomes available.
+	runDataStore (runCallback) {
+		++(this.dataStoreRunCount);
+		if (this.dataStoreRunCount < 1) {
+			this.dataStoreRunCount = 1;
 		}
-		if (typeof disconnectCallback == "function") {
-			agent.linkClientDisconnectCallbacks.push (disconnectCallback);
-		}
-		if (agent.isConnectingLinkClient) {
-			return;
+		if (this.isStarted) {
+			this.runDataStoreTask.setRepeating ((callback) => {
+				this.runDataStoreProcess (callback);
+			}, App.STORE_RUN_PERIOD * 1000, App.STORE_RUN_PERIOD * 1000);
 		}
 
-		agent.isConnectingLinkClient = true;
-		if ((agent.linkClientUrl == null) && (App.LINK_SERVER_URL != "")) {
-			agent.linkClientUrl = App.LINK_SERVER_URL;
+		if (typeof runCallback == "function") {
+			if ((this.dataStore != null) && this.dataStore.isRunning) {
+				process.nextTick (runCallback);
+			}
+			else {
+				this.runDataStoreEventEmitter.once (START_EVENT, runCallback);
+			}
 		}
-		Log.write (Log.DEBUG, "Link server connections enabled; linkClientUrl=\"" + agent.linkClientUrl + "\"");
-		agent.updateLinkClientTask.setRepeating (function (callback) {
-			agent.updateLinkClient (callback);
-		}, App.HEARTBEAT_PERIOD, App.HEARTBEAT_PERIOD * 2);
-		agent.updateLinkClientTask.setNextRepeat (App.HEARTBEAT_PERIOD);
 	}
 
-	// Copy fields from the provided object into the agent's run state and execute a write operation to persist the change
-	updateRunState (fields) {
+	// Run the data store process if it's not already running and invoke the provided callback when complete
+	runDataStoreProcess (callback) {
+		if (this.dataStore != null) {
+			if (this.dataStore.isRunning) {
+				process.nextTick (callback);
+				return;
+			}
+		}
+
+		this.dataStore = new DataStore (App.MONGOD_PATH, this.dataPath + "/records", App.STORE_PORT);
+		this.dataStore.run ().then (() => {
+			this.runDataStoreEventEmitter.emit (START_EVENT);
+			callback ();
+		}).catch ((err) => {
+			Log.err (`Failed to start data store process; runPath="${App.MONGOD_PATH}" err=${err}`);
+			callback ();
+		});
+	}
+
+	// Notify the agent that it should stop maintaining a previously requested data store process
+	stopDataStore () {
+		--(this.dataStoreRunCount);
+		if (this.dataStoreRunCount < 0) {
+			this.dataStoreRunCount = 0;
+		}
+		if (this.dataStoreRunCount <= 0) {
+			this.runDataStoreTask.stop ();
+			if (this.dataStore != null) {
+				this.dataStore.stop ();
+				this.dataStore = null;
+			}
+		}
+	}
+
+	// Return a promise that opens the data store and resolves with the resulting DataStore object, or rejects if the data store could not opened
+	openDataStore () {
+		return (new Promise ((resolve, reject) => {
+			let ds;
+
+			ds = this.dataStore;
+			if (ds == null) {
+				reject (Error ("DataStore not available"));
+				return;
+			}
+
+			ds.open ().then (() => {
+				resolve (ds);
+			}).catch ((err) => {
+				reject (err);
+			});
+		}));
+	}
+
+	// Copy fields from the provided object into the agent's run state and execute a write operation to persist the change. If endCallback is provided, invoke it when the write operation completes.
+	updateRunState (fields, endCallback) {
 		for (let i in fields) {
 			this.runState[i] = fields[i];
 		}
 
-		FsUtil.writeStateFile (this.runStatePath, this.runState, () => { });
-	}
-
-	// Publish an event to the active linkClient. Returns a Result value.
-	publishEvent (cmdInv) {
-		if ((! this.isLinkClientConnected) || (this.linkClient == null)) {
-			Log.write (Log.DEBUG, "Failed to publish event; err=\"Not connected\"");
-			return (Result.ERROR_NOT_CONNECTED);
+		if (typeof endCallback != "function") {
+			endCallback = () => { };
 		}
-
-		cmdInv = SystemInterface.parseCommand (cmdInv);
-		if (SystemInterface.isError (cmdInv)) {
-			Log.write (Log.DEBUG, "Failed to publish event; err=" + cmdInv);
-			return (Result.ERROR_INVALID_PARAMS);
-		}
-
-		this.linkClient.emit (SystemInterface.Constant.WebSocketEvent, cmdInv);
-		return (Result.SUCCESS);
-	}
-
-	// Publish a WriteEvents command containing the provided item or array of items to the active linkClient. Returns a Result value.
-	publishWriteEvents (items) {
-		let cmd;
-
-		if ((! this.isLinkClientConnected) || (this.linkClient == null)) {
-			Log.write (Log.DEBUG, "Failed to write events; err=\"Not connected\"");
-			return (Result.ERROR_NOT_CONNECTED);
-		}
-
-		if (! Array.isArray (items)) {
-			items = [ items ];
-		}
-		cmd = SystemInterface.createCommand (this.getCommandPrefix (), "WriteEvents", SystemInterface.Constant.Link, {
-			items: items
-		});
-		if (SystemInterface.isError (cmd)) {
-			Log.write (Log.ERR, "Failed to create WriteEvents command: " + cmd);
-			return (Result.ERROR_INVALID_PARAMS);
-		}
-
-		this.linkClient.emit (SystemInterface.Constant.WebSocketEvent, cmd);
-		return (Result.SUCCESS);
+		FsUtil.writeStateFile (this.runStatePath, this.runState, endCallback);
 	}
 
 	// Execute actions needed to maintain the datagram socket and invoke the provided callback when complete
 	updateDatagramSocket (callback) {
-		var agent, addrmap, interfaces, i, addresses, j, addr, item, ip, ischanged;
-
-		agent = this;
+		let addrmap, interfaces, addresses, item, ip, ischanged, createSocket;
 
 		addrmap = { };
 		interfaces = Os.networkInterfaces ();
-		for (i in interfaces) {
+		for (let i in interfaces) {
 			addresses = interfaces[i];
-			if (App.ENABLE_VERBOSE_LOGGING) {
-				Log.write (Log.DEBUG4, "Found network interface; name=" + i + " addressCount=" + addresses.length + " interfaceCount=" + Object.keys (interfaces).length);
-			}
-			for (j = 0; j < addresses.length; ++j) {
-				addr = addresses[j];
-				if (App.ENABLE_VERBOSE_LOGGING) {
-					Log.write (Log.DEBUG4, "Found network address; name=" + i + " address=" + addr.address + " netmask=" + addr.netmask + " family=" + addr.family + " mac=" + addr.mac + " internal=" + addr.internal);
-				}
+			for (let addr of addresses) {
 				if (addr.internal) {
 					continue;
 				}
@@ -719,24 +1027,24 @@ class SystemAgent {
 		}
 
 		if (Object.keys (addrmap).length <= 0) {
-			if (Object.keys (agent.datagramBroadcastAddressMap).length > 0) {
-				agent.datagramBroadcastAddressMap = { };
+			if (Object.keys (this.datagramBroadcastAddressMap).length > 0) {
+				this.datagramBroadcastAddressMap = { };
 			}
-			if (agent.datagramSocket != null) {
-				Log.write (Log.DEBUG3, "Close datagram socket (no broadcast addresses available)");
-				agent.isBroadcastReady = false;
-				agent.datagramSocket.close ();
-				agent.datagramSocket = null;
+			if (this.datagramSocket != null) {
+				Log.debug ("Close datagram socket (no broadcast addresses available)");
+				this.isBroadcastReady = false;
+				this.datagramSocket.close ();
+				this.datagramSocket = null;
 			}
 		}
 		else {
 			ischanged = false;
-			if (Object.keys (addrmap).length != Object.keys (agent.datagramBroadcastAddressMap).length) {
+			if (Object.keys (addrmap).length != Object.keys (this.datagramBroadcastAddressMap).length) {
 				ischanged = true;
 			}
 			else {
-				for (i in addrmap) {
-					if (addrmap[i] != agent.datagramBroadcastAddressMap[i]) {
+				for (let i in addrmap) {
+					if (addrmap[i] != this.datagramBroadcastAddressMap[i]) {
 						ischanged = true;
 						break;
 					}
@@ -744,37 +1052,35 @@ class SystemAgent {
 			}
 
 			if (ischanged) {
-				if (agent.datagramSocket != null) {
-					Log.write (Log.DEBUG3, "Close datagram socket (broadcast addresses changed)");
-					agent.isBroadcastReady = false;
-					agent.datagramSocket.close ();
-					agent.datagramSocket = null;
+				if (this.datagramSocket != null) {
+					this.isBroadcastReady = false;
+					this.datagramSocket.close ();
+					this.datagramSocket = null;
 				}
-				agent.datagramBroadcastAddressMap = addrmap;
+				this.datagramBroadcastAddressMap = addrmap;
 			}
 
-			if (agent.datagramSocket == null) {
-				agent.datagramSocket = createSocket ();
-				function createSocket () {
-					var socket;
+			if (this.datagramSocket == null) {
+				createSocket = () => {
+					let socket;
 
 					socket = Dgram.createSocket ("udp4");
-					socket.on ("error", function (err) {
-						Log.write (Log.ERR, "Datagram socket error; err=" + err);
+					socket.on ("error", (err) => {
+						Log.err (`Datagram socket error; err=${err}`);
 						socket.close ();
-						agent.isBroadcastReady = false;
-						agent.datagramSocket = null;
+						this.isBroadcastReady = false;
+						this.datagramSocket = null;
 					});
-					socket.on ("listening", function () {
-						var address, port;
+					socket.on ("listening", () => {
+						let address, port;
 
 						try {
 							socket.setBroadcast (true);
 						}
 						catch (e) {
-							agent.isBroadcastReady = false;
-							agent.datagramSocket = null;
-							Log.write (Log.WARNING, "Failed to enable broadcast socket, network functions may be unavailable; err=" + err);
+							this.isBroadcastReady = false;
+							this.datagramSocket = null;
+							Log.warn (`Failed to enable broadcast socket, network functions may be unavailable; err=${err}`);
 							return;
 						}
 						address = socket.address ();
@@ -782,22 +1088,23 @@ class SystemAgent {
 							port = address.port;
 						}
 						if (typeof port != "number") {
-							agent.isBroadcastReady = false;
-							agent.datagramSocket = null;
-							Log.write (Log.WARNING, "Failed to read port from datagram socket, network functions may be unavailable");
+							this.isBroadcastReady = false;
+							this.datagramSocket = null;
+							Log.warn ("Failed to read port from datagram socket, network functions may be unavailable");
 							return;
 						}
-						Log.write (Log.DEBUG, "Datagram socket listening; port=" + port);
-						agent.datagramSocketPort = port;
-						agent.isBroadcastReady = true;
+						Log.debug (`Datagram socket listening; port=${port}`);
+						this.datagramSocketPort = port;
+						this.isBroadcastReady = true;
 					});
-					socket.on ("message", function (msg, rinfo) {
-						agent.handleDatagramMessage (msg);
+					socket.on ("message", (msg, rinfo) => {
+						this.handleDatagramMessage (msg);
 					});
 
 					socket.bind (App.UDP_PORT);
 					return (socket);
-				}
+				};
+				this.datagramSocket = createSocket ();
 			}
 		}
 
@@ -806,78 +1113,69 @@ class SystemAgent {
 
 	// Execute actions appropriate for a received datagram message
 	handleDatagramMessage (msg) {
-		var agent, cmd;
+		let cmd;
 
-		agent = this;
 		cmd = SystemInterface.parseCommand (msg.toString ());
-		if (App.ENABLE_VERBOSE_LOGGING) {
-			Log.write (Log.DEBUG4, "Datagram message received; len=" + msg.length + " msg=" + msg + " cmd=" + JSON.stringify (cmd));
-		}
 		if (SystemInterface.isError (cmd)) {
-			Log.write (Log.DEBUG, "Discard datagram message; err=\"" + cmd + "\"");
 			return;
 		}
 
 		switch (cmd.command) {
 			case SystemInterface.CommandId.ReportStatus: {
-				var statuscmd, desturl, url;
+				let statuscmd, desturl, url;
 
 				desturl = cmd.params.destination;
 				url = Url.parse (cmd.params.destination);
 				if (url == null) {
 					break;
 				}
-
-				Log.write (Log.DEBUG3, "ReportStatus received; destination=\"" + desturl + "\" reportCommandType=" + cmd.params.reportCommandType + " protocol=" + url.protocol + " hostname=" + url.hostname + " port=" + url.port);
 				if (url.protocol.match (/^udp(:){0,1}/)) {
-					statuscmd = agent.getStatus ();
+					statuscmd = this.getStatus ();
 					if (statuscmd != null) {
 						statuscmd.commandType = cmd.params.reportCommandType;
 						statuscmd = Buffer.from (JSON.stringify (statuscmd));
-						agent.datagramSocket.send (statuscmd, 0, statuscmd.length, url.port, url.hostname);
+						this.datagramSocket.send (statuscmd, 0, statuscmd.length, url.port, url.hostname);
 					}
 				}
 				else if (url.protocol.match (/^http(:){0,1}/)) {
-					statuscmd = agent.getStatus ();
+					statuscmd = this.getStatus ();
 					if (statuscmd != null) {
 						statuscmd.commandType = cmd.params.reportCommandType;
 						statuscmd = JSON.stringify (statuscmd);
-						agent.sendHttpPost (desturl, statuscmd);
+						this.sendHttpPost (desturl, statuscmd);
 					}
 				}
 				else {
-					Log.write (Log.DEBUG, "ReportStatus discarded; err=Unknown destination protocol \"" + url.protocol + "\"");
+					Log.debug (`ReportStatus discarded; err=Unknown destination protocol ${url.protocol}`);
 				}
 				break;
 			}
 			case SystemInterface.CommandId.ReportContact: {
-				var contactcmd, desturl, url;
+				let contactcmd, desturl, url;
 
 				desturl = cmd.params.destination;
 				url = Url.parse (cmd.params.destination);
 				if (url == null) {
 					break;
 				}
-
-				Log.write (Log.DEBUG3, "ReportContact received; destination=\"" + desturl + "\" reportCommandType=" + cmd.params.reportCommandType + " protocol=" + url.protocol + " hostname=" + url.hostname + " port=" + url.port);
 				if (url.protocol.match (/^udp(:){0,1}/)) {
-					contactcmd = agent.getContact ();
+					contactcmd = this.getContact ();
 					if (contactcmd != null) {
 						contactcmd.commandType = cmd.params.reportCommandType;
 						contactcmd = Buffer.from (JSON.stringify (contactcmd));
-						agent.datagramSocket.send (contactcmd, 0, contactcmd.length, url.port, url.hostname);
+						this.datagramSocket.send (contactcmd, 0, contactcmd.length, url.port, url.hostname);
 					}
 				}
 				else if (url.protocol.match (/^http(:){0,1}/)) {
-					contactcmd = agent.getContact ();
+					contactcmd = this.getContact ();
 					if (contactcmd != null) {
 						contactcmd.commandType = cmd.params.reportCommandType;
 						contactcmd = JSON.stringify (contactcmd);
-						agent.sendHttpPost (desturl, contactcmd);
+						this.sendHttpPost (desturl, contactcmd);
 					}
 				}
 				else {
-					Log.write (Log.DEBUG, "ReportContact discarded; err=Unknown destination protocol \"" + url.protocol + "\"");
+					Log.debug (`ReportContact discarded; err=Unknown destination protocol ${url.protocol}`);
 				}
 				break;
 			}
@@ -887,128 +1185,9 @@ class SystemAgent {
 		}
 	}
 
-	// Execute actions needed to maintain the link client connection and invoke the provided callback when complete
-	updateLinkClient (callback) {
-		let client, targeturl, linkserver;
-
-		if (! this.isConnectingLinkClient) {
-			this.updateLinkClientTask.stopRepeat ();
-			process.nextTick (callback);
-			return;
-		}
-
-		if (this.linkClientUrl == null) {
-			linkserver = null;
-			for (let server of this.serverList) {
-				if (server.name == "LinkServer") {
-					linkserver = server;
-					break;
-				}
-			}
-			if (linkserver != null) {
-				targeturl = linkserver.linkUrl;
-				if ((typeof targeturl == "string") && (targeturl != "")) {
-					this.linkClientUrl = targeturl;
-					Log.write (Log.DEBUG, `Found local link server; url=${this.linkClientUrl}`);
-				}
-			}
-			else {
-				if (! this.sendLinkServerBroadcastTask.isRepeating) {
-					Log.write (Log.DEBUG, "Link client sending broadcasts to find server");
-					this.sendLinkServerBroadcastTask.setRepeating ((callback, task) => {
-						let cmd;
-
-						cmd = SystemInterface.createCommand (this.getCommandPrefix (), "ReportStatus", SystemInterface.Constant.DefaultCommandType, {
-							destination: "http://" + this.urlHostname + ":" + this.httpServerPort + "/",
-							reportCommandType: SystemInterface.Constant.DefaultCommandType
-						});
-						if (SystemInterface.isError (cmd)) {
-							Log.write (Log.ERR, `Failed to create ReportStatus command for LinkServer discovery; err=${cmd}`);
-							task.stopRepeat ();
-						}
-						else {
-							this.sendBroadcast (JSON.stringify (cmd));
-						}
-
-						process.nextTick (callback);
-					}, (LINK_SERVER_BROADCAST_PERIOD * 1000), Math.floor (LINK_SERVER_BROADCAST_PERIOD * 1000 * 1.2));
-				}
-			}
-
-			process.nextTick (callback);
-			return;
-		}
-
-		if (this.linkClient == null) {
-			Log.write (Log.DEBUG, `Link client created; linkClientUrl=${this.linkClientUrl}`);
-			client = new IoClient (this.linkClientUrl, {
-				reconnection: false,
-				multiplex: false,
-				transports: ["websocket"]
-			});
-			this.linkClient = client;
-
-			client.on ("connect", () => {
-				Log.write (Log.DEBUG, `Link client connected; linkClientUrl=${this.linkClientUrl}`);
-				this.isLinkClientConnected = true;
-
-				for (let i = 0; i < this.linkClientConnectCallbacks.length; ++i) {
-					this.linkClientConnectCallbacks[i] ();
-				}
-
-				this.publishStatusEventTask.setRepeating ((callback, task) => {
-					let cmd;
-
-					cmd = this.getStatus ();
-					if (cmd == null) {
-						task.stopRepeat ();
-					}
-					else {
-						SystemInterface.setRecordFields (cmd, this.agentId, new Date ().getTime ());
-						this.publishWriteEvents (cmd);
-					}
-					process.nextTick (callback);
-				}, Math.floor (App.PUBLISH_STATUS_PERIOD * 1000 * 0.98), App.PUBLISH_STATUS_PERIOD * 1000);
-			});
-
-			client.on ("disconnect", (err) => {
-				Log.write (Log.DEBUG, `Link client disconnect; err=${err}`);
-				this.isLinkClientConnected = false;
-				if (this.linkClient != null) {
-					this.linkClient.close ();
-					this.linkClient = null;
-				}
-				this.linkClientUrl = null;
-
-				this.publishStatusEventTask.stopRepeat ();
-				for (let i = 0; i < this.linkClientDisconnectCallbacks.length; ++i) {
-					this.linkClientDisconnectCallbacks[i] ();
-				}
-			});
-
-			client.on ("error", (err) => {
-				Log.write (Log.DEBUG, `Link client err; err=${err}`);
-			});
-
-			client.on (SystemInterface.Constant.WebSocketEvent, (cmdInv) => {
-				let fn;
-
-				fn = this.linkCommandTypeMap[cmdInv.commandType];
-				if (App.ENABLE_VERBOSE_LOGGING) {
-					Log.write (Log.DEBUG4, `Received websocket event; cmdInv=${JSON.stringify (cmdInv)} handlerFound=${(typeof fn == "function")}`);
-				}
-				if (typeof fn == "function") {
-					fn (cmdInv);
-				}
-			});
-		}
-
-		process.nextTick (callback);
-	}
-
 	// Send a broadcast message using the provided string or Buffer value. Returns a boolean value indicating if the message was sent.
 	sendBroadcast (message) {
-		var i, item;
+		let i, item;
 
 		if (! this.isBroadcastReady) {
 			return (false);
@@ -1017,10 +1196,6 @@ class SystemAgent {
 		if (typeof message == "string") {
 			message = Buffer.from (message);
 		}
-		if (App.ENABLE_VERBOSE_LOGGING) {
-			Log.write (Log.DEBUG4, "Send broadcast message; message=" + message);
-		}
-
 		for (i in this.datagramBroadcastAddressMap) {
 			item = this.datagramBroadcastAddressMap[i];
 			this.datagramSocket.send (message, 0, message.length, SystemInterface.Constant.DefaultUdpPort, item);
@@ -1028,23 +1203,20 @@ class SystemAgent {
 		return (true);
 	}
 
-	// Send a message using an HTTP POST request and the provided string or Buffer value. Returns a boolean value indicating if the message was sent.
+	// Send a message using an HTTP POST request and the provided string or Buffer value
 	sendHttpPost (postUrl, message) {
-		var url, postdata, req;
+		let url, postdata, req;
 
 		url = postUrl;
 		if (typeof url == "string") {
 			url = Url.parse (url);
 			if (url == null) {
-				Log.write (Log.DEBUG, "Failed to send HTTP POST request; err=Invalid URL \"" + postUrl + "\"");
+				Log.debug (`Failed to send HTTP POST request; err=Invalid URL, ${postUrl}`);
 				return;
 			}
 		}
 
 		postdata = message;
-		if (App.ENABLE_VERBOSE_LOGGING) {
-			Log.write (Log.DEBUG4, "Send HTTP POST request; postUrl=\"" + postUrl + "\" postdata=" + postdata);
-		}
 		req = Http.request ({
 			hostname: url.hostname,
 			port: url.port,
@@ -1058,15 +1230,10 @@ class SystemAgent {
 		req.on ("error", requestError);
 
 		function requestComplete (response) {
-			if (App.ENABLE_VERBOSE_LOGGING) {
-				Log.write (Log.DEBUG4, "Completed sending HTTP POST request; statusCode=" + response.statusCode + " postUrl=\"" + postUrl + "\" postdata=" + postdata);
-			}
 		}
 
 		function requestError (err) {
-			if (App.ENABLE_VERBOSE_LOGGING) {
-				Log.write (Log.DEBUG, "Error sending HTTP POST request; err=" + err + " postUrl=\"" + postUrl + "\" postdata=" + postdata);
-			}
+			Log.debug (`Error sending HTTP POST request; err=${err} postUrl=${postUrl}`);
 		}
 
 		req.write (postdata);
@@ -1075,20 +1242,10 @@ class SystemAgent {
 
 	// Return an object containing an AgentStatus command that reflects current state, or null if the command could not be created
 	getStatus () {
-		let cmd, tasks, runcount, task, params;
+		let cmd, params;
 
 		if (! this.isBroadcastReady) {
 			return (null);
-		}
-
-		tasks = [ ];
-		runcount = 0;
-		for (let i in this.taskMap) {
-			task = this.taskMap[i];
-			if (task.isRunning) {
-				++runcount;
-			}
-			tasks.push (task.getTaskItem ());
 		}
 
 		params = {
@@ -1096,31 +1253,26 @@ class SystemAgent {
 			displayName: this.displayName,
 			applicationName: this.applicationName,
 			urlHostname: this.urlHostname,
-			tcpPort: this.httpServerPort,
+			tcpPort1: this.httpServerPort1,
+			tcpPort2: this.httpServerPort2,
 			udpPort: this.datagramSocketPort,
+			linkPath: this.linkPath,
 			uptime: Log.getDurationString (new Date ().getTime () - this.startTime),
 			version: App.VERSION,
 			nodeVersion: process.version,
 			platform: this.platform,
-			isRunning: false,
-			tasks: tasks,
-			runCount: runcount,
-			maxRunCount: this.maxRunCount
+			isEnabled: this.isEnabled,
+			taskCount: this.taskGroup.getTaskCount (),
+			runCount: this.taskGroup.getRunCount (),
+			maxRunCount: this.taskGroup.maxRunCount
 		};
-
-		if (this.serverList.length > 0) {
-			params.isRunning = true;
-			for (let server of this.serverList) {
-				server.setStatus (params);
-				if (! server.isRunning) {
-					params.isRunning = false;
-				}
-			}
+		for (let server of this.serverList) {
+			server.setStatus (params);
 		}
 
 		cmd = SystemInterface.createCommand (this.getCommandPrefix (), "AgentStatus", SystemInterface.Constant.DefaultCommandType, params);
 		if (SystemInterface.isError (cmd)) {
-			Log.write (Log.ERR, "Failed to create agent status command: " + cmd);
+			Log.err (`Failed to create agent status command; err=${cmd}`);
 			return (null);
 		}
 
@@ -1138,291 +1290,239 @@ class SystemAgent {
 		params.isEnabled = this.isEnabled;
 		params.displayName = this.displayName;
 
-		return (SystemInterface.createCommand (this.getCommandPrefix (), "AgentConfiguration", SystemInterface.Constant.DefaultCommandType, params));
+		return (this.createCommand ("AgentConfiguration", SystemInterface.Constant.DefaultCommandType, params));
 	}
 
 	// Return an object containing an AgentContact command that reflects current state, or null if the contact command could not be created. The generated command uses a default prefix with empty fields to yield a shorter message.
 	getContact () {
-		var params;
+		let params;
 
 		params = {
 			id: this.agentId,
 			urlHostname: this.urlHostname,
-			tcpPort: this.httpServerPort,
+			tcpPort1: this.httpServerPort1,
+			tcpPort2: this.httpServerPort2,
 			udpPort: this.datagramSocketPort,
 			version: App.VERSION,
 			nodeVersion: process.version
 		};
-		if (this.agentLinkUrl != "") {
-			params.linkUrl = this.agentLinkUrl;
-		}
 
-		return (SystemInterface.createCommand (SystemInterface.createCommandPrefix (), "AgentContact", SystemInterface.Constant.DefaultCommandType, params));
+		return (this.createCommand ("AgentContact", SystemInterface.Constant.DefaultCommandType, params));
 	}
 
-	// Update the state of the task map and invoke the provided callback when complete
-	updateTaskMap (callback) {
-		var agent, now, i, task, runcount, mintask, removelist, mapitem, taskitem, shouldwrite, cmd, result;
+	// Return a string containing a newly generated UUID value that references the specified SystemInterface command type
+	getUuid (idType) {
+		let uuid, id, chars;
 
-		agent = this;
-		now = new Date ().getTime ();
-		while (true) {
-			if (agent.getRunCount () >= agent.maxRunCount) {
-				break;
-			}
-
-			mintask = null;
-			for (i in agent.taskMap) {
-				task = agent.taskMap[i];
-				if (task.isRunning || (task.startTime > 0)) {
-					continue;
-				}
-
-				if ((mintask == null) || (task.id < mintask.id)) {
-					mintask = task;
-				}
-			}
-
-			if (mintask == null) {
-				break;
-			}
-
-			mintask.run ();
-			if (! mintask.isRunning) {
-				Log.write (Log.DEBUG, mintask.toString () + " Failed to run, remove");
-
-				// TODO: Possibly write a closed event record in this case
-
-				delete (agent.taskRecordMap[mintask.id]);
-				delete (agent.taskMap[mintask.id]);
-			}
+		if (typeof idType != "number") {
+			idType = 0;
+		}
+		if (idType < 0) {
+			idType = 0;
+		}
+		if (idType > 0xFFFF) {
+			idType = 0xFFFF;
 		}
 
-		removelist = [ ];
-		for (i in agent.taskMap) {
-			task = agent.taskMap[i];
-			if ((task.startTime > 0) && (task.endTime > 0)) {
-				Log.write (Log.DEBUG, task.toString () + " ended, remove");
-				removelist.push (task);
-				continue;
-			}
-
-			if ((task.startTime <= 0) && task.isCancelled) {
-				Log.write (Log.DEBUG, task.toString () + " cancelled, remove");
-				removelist.push (task);
-				continue;
-			}
+		id = new Date ().getTime ();
+		id = Math.floor (id / 1000);
+		id = id.toString (16);
+		while (id.length < 12) {
+			id = "0" + id;
 		}
+		uuid = id.substring (0, 8);
+		uuid += "-" + id.substring (8, 12);
 
-		for (i = 0; i < removelist.length; ++i) {
-			task = removelist[i];
-
-			taskitem = task.getTaskItem ();
-			cmd = SystemInterface.createCommand (agent.getCommandPrefix (), "TaskItem", task.recordCommandType, taskitem);
-			if (SystemInterface.isError (cmd)) {
-				Log.write (Log.ERR, "Failed to write task record; err=" + cmd);
-			}
-			else {
-				SystemInterface.setRecordFields (cmd, taskitem.id, now);
-				SystemInterface.closeRecord (cmd);
-				result = agent.publishWriteEvents ([cmd]);
-				if (result != Result.SUCCESS) {
-					Log.write (Log.ERR, " Failed to write task record; recordId=\"" + taskitem.id + "\"");
-				}
-			}
-
-			delete (agent.taskRecordMap[task.id]);
-			delete (agent.taskMap[task.id]);
+		id = idType.toString (16);
+		while (id.length < 4) {
+			id = "0" + id;
 		}
+		uuid += "-" + id;
 
-		for (i in agent.taskMap) {
-			task = agent.taskMap[i];
-			taskitem = task.getTaskItem ();
-			mapitem = agent.taskRecordMap[i];
-
-			shouldwrite = false;
-			if (mapitem == null) {
-				shouldwrite = true;
-			}
-			else {
-				if (mapitem.percentComplete != taskitem.percentComplete) {
-					shouldwrite = true;
-				}
-			}
-			agent.taskRecordMap[i] = taskitem;
-
-			if (shouldwrite) {
-				cmd = SystemInterface.createCommand (agent.getCommandPrefix (), "TaskItem", task.recordCommandType, taskitem);
-				if (SystemInterface.isError (cmd)) {
-					Log.write (Log.ERR, "Failed to write task record; err=" + cmd);
-				}
-				else {
-					SystemInterface.setRecordFields (cmd, taskitem.id, now);
-					result = agent.publishWriteEvents ([cmd]);
-					if (result != Result.SUCCESS) {
-						Log.write (Log.ERR, " Failed to write task record; recordId=\"" + taskitem.id + "\"");
-					}
-				}
-			}
+		chars = [ '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f' ];
+		id = "";
+		while (id.length < 16) {
+			id += chars[Math.floor (Math.random () * chars.length)];
 		}
+		uuid += "-" + id.substring (0, 4);
+		uuid += "-" + id.substring (4, 16);
 
-		process.nextTick (callback);
-	}
-
-	// Return the number of tasks currently running
-	getRunCount () {
-		let count, task;
-
-		count = 0;
-		for (let i in this.taskMap) {
-			task = this.taskMap[i];
-			if (task.isRunning) {
-				++count;
-			}
-		}
-
-		return (count);
-	}
-
-	// Return the number of tasks running or waiting to be run
-	getTaskQueueSize () {
-		var i, count;
-
-		count = 0;
-		for (i in this.taskMap) {
-			task = this.taskMap[i];
-			if ((task.startTime <= 0) || task.isRunning) {
-				++count;
-			}
-		}
-
-		return (count);
-	}
-
-	// Add a task to the agent's map, assigning its ID value in the process. endCallback can be omitted if not needed.
-	addTask (task, endCallback) {
-		task.id = UuidV4 ();
-		this.taskMap[task.id] = task;
-
-		if (typeof endCallback == "function") {
-			task.endCallback = endCallback;
-		}
-		Log.write (Log.DEBUG, task.toString () + " Added");
-		this.updateTaskMapTask.setNextRepeat (0);
-	}
-
-	// Return the task with the specified ID, or null if no such task was found
-	getTask (taskId) {
-		return (this.taskMap[taskId]);
-	}
-
-	// Cancel a task, as specified in the provided CancelTask command
-	cancelTask (cmdInv) {
-		var task;
-
-		task = this.taskMap[cmdInv.params.taskId];
-		Log.write (Log.DEBUG, "Cancel task; cmdInv=" + JSON.stringify (cmdInv) + " task=" + ((task != null) ? task.toString () : "NULL"));
-		if (task == null) {
-			return;
-		}
-
-		task.cancel ();
-		this.updateTaskMapTask.setNextRepeat (0);
-	}
-
-	// Notify the agent that it should publish an AgentStatus event as soon as possible
-	publishStatus () {
-		this.publishStatusEventTask.setNextRepeat (0);
+		return (uuid);
 	}
 
 	// Return a SystemInterface command prefix object, suitable for use with the getCommandInvocation method
 	getCommandPrefix (priority, startTime, duration) {
-		// TODO: Possibly add auth hash fields to the prefix object
-		if (typeof priority != "number") {
-			priority = 0;
+		let prefix;
+
+		prefix = { };
+		prefix[SystemInterface.Constant.CreateTimePrefixField] = new Date ().getTime ();
+		prefix[SystemInterface.Constant.AgentIdPrefixField] = this.agentId;
+		if (typeof priority == "number") {
+			if (priority < 0) {
+				priority = 0;
+			}
+			if (priority > SystemInterface.MaxCommandPriority) {
+				priority = SystemInterface.MaxCommandPriority;
+			}
+			prefix[SystemInterface.Constant.PriorityPrefixField] = Math.floor (priority);
 		}
 
-		return (SystemInterface.createCommandPrefix (this.agentId, this.commandUserId, priority, startTime, duration));
+		if (typeof startTime == "number") {
+			if (startTime < 0) {
+				startTime = 0;
+			}
+			prefix[SystemInterface.Constant.StartTimePrefixField] = Math.floor (startTime);
+		}
+
+		if (typeof duration == "number") {
+			if (duration < 0) {
+				duration = 0;
+			}
+			prefix[SystemInterface.Constant.DurationPrefixField] = Math.floor (duration);
+		}
+
+		return (prefix);
 	}
 
-	// Execute an invocation on a remote agent URL using the provided command parameters, and invoke the provided callback when complete, with parameters named "err" (non-null if an error occurred), "invokeUrl" (the URL used for the invocation) and "cmdInv" (a command invocation parsed from response data).
-	invokeAgentCommand (urlHostname, tcpPort, cmdInv, responseCommandId, callback) {
-		var url, req, body;
+	// Populate prefix authorization fields in a command object
+	setCommandAuthorization (cmdInv, authorizeSecret, authorizeToken) {
+		let hash;
 
-		url = "http://" + urlHostname + ":" + tcpPort + "/?json=" + encodeURIComponent (JSON.stringify (cmdInv));
-		if (SystemInterface.isError (cmdInv)) {
-			if (callback != null) {
-				process.nextTick (function () {
-					callback ("Invalid command: " + cmdInv, url, null);
-				});
+		hash = Crypto.createHash (SystemInterface.Constant.AuthorizationHashAlgorithm);
+		SystemInterface.setCommandAuthorization (cmdInv, authorizeSecret, authorizeToken,
+			(data) => {
+				hash.update (data);
+			},
+			() => {
+				return (hash.digest ("hex"));
 			}
-			return;
+		);
+	}
+
+	// Return an object containing a command with the default agent prefix and the provided parameters, or null if the command could not be validated, in which case an error log message is generated
+	createCommand (commandName, commandType, commandParams, authorizeSecret, authorizeToken) {
+		let cmd;
+
+		cmd = SystemInterface.createCommand (this.getCommandPrefix (), commandName, commandType, commandParams);
+		if (SystemInterface.isError (cmd)) {
+			Log.err (`Failed to create command invocation; commandName=${commandName} err=${cmd}`);
+			return (null);
 		}
 
-		body = "";
-		req = Http.get (url, requestStarted);
-		req.on ("error", function (err) {
-			endRequest (err, null);
-		});
+		if ((typeof authorizeSecret == "string") || (typeof authorizeToken == "string")) {
+			this.setCommandAuthorization (cmd, authorizeSecret, authorizeToken);
+		}
 
-		function requestStarted (res) {
-			if (res.statusCode != 200) {
-				endRequest ("Non-success response code " + res.statusCode, null);
+		return (cmd);
+	}
+
+	// Execute a command invocation on a remote agent and invoke endCallback (err, responseCommand) when complete. If endCallback is not provided, instead return a Promise that executes the operation.
+	invokeAgentCommand (urlHostname, tcpPort, invokePath, cmdInv, responseCommandId, endCallback) {
+		let execute = (executeCallback) => {
+			let options, req, path, body, requestStarted, endRequest;
+
+			if (SystemInterface.isError (cmdInv)) {
+				if (executeCallback != null) {
+					process.nextTick (() => {
+						executeCallback ("Invalid command: " + cmdInv, url, null);
+					});
+				}
 				return;
 			}
-			res.on ("error", function (err) {
-				endRequest (err, null);
-			});
-			res.on ("data", function (data) {
-				body += data;
-			});
-			res.on ("end", responseComplete);
-		}
 
-		function responseComplete () {
-			endRequest (null, body);
-		}
-
-		function endRequest (err, data) {
-			var cmdinv;
-
-			if (callback != null) {
-				if (err != null) {
-					err = "[" + url + "] " + err;
+			body = "";
+			setTimeout (() => {
+				path = invokePath;
+				if (path.indexOf ("/") != 0) {
+					path = "/" + path;
 				}
+				path += "?" + SystemInterface.Constant.UrlQueryParameter + "=" + encodeURIComponent (JSON.stringify (cmdInv));
+				options = {
+					method: "GET",
+					hostname: urlHostname,
+					port: tcpPort,
+					path: path
+				};
+				if (App.ENABLE_HTTPS) {
+					options.protocol = "https:";
+					options.agent = new Https.Agent ({
+						// TODO: Possibly set the "ca" option (certificate authority block) here instead of rejectUnauthorized, i.e. Fs.readFileSync ("tls-cert.pem")
+						rejectUnauthorized: false
+					});
+					req = Https.request (options, requestStarted);
+				}
+				else {
+					options.protocol = "http:";
+					req = Http.request (options, requestStarted);
+				}
+				req.on ("error", (err) => {
+					endRequest (err, null);
+				});
 
-				cmdinv = null;
-				if (err == null) {
-					cmdinv = SystemInterface.parseCommand (data);
-					if (SystemInterface.isError (cmdinv)) {
-						err = "Response for \"" + cmdInv.commandName + "\" contained invalid command invocation, " + cmdinv;
-						cmdinv = null;
+				req.end ();
+			}, 0);
+
+			requestStarted = (res) => {
+				if (res.statusCode != 200) {
+					endRequest ("Non-success response code " + res.statusCode, null);
+					return;
+				}
+				res.on ("error", (err) => {
+					endRequest (err, null);
+				});
+				res.on ("data", (data) => {
+					body += data;
+				});
+				res.on ("end", () => {
+					endRequest (null, body);
+				});
+			};
+
+			endRequest = (err, data) => {
+				let responsecmd;
+
+				if (executeCallback != null) {
+					responsecmd = null;
+					if (err == null) {
+						responsecmd = SystemInterface.parseCommand (data);
+						if (SystemInterface.isError (responsecmd)) {
+							err = "Response for \"" + cmdInv.commandName + "\" contained invalid command invocation, " + responsecmd;
+							responsecmd = null;
+						}
 					}
-				}
 
-				if ((err == null) && (typeof responseCommandId == "number")) {
-					if (cmdinv.command != responseCommandId) {
-						err = "Response for \"" + cmdInv.commandName + "\" contained invalid command type " + cmdinv.command + ", expected " + responseCommandId;
-						cmdinv = null;
+					if ((err == null) && (typeof responseCommandId == "number")) {
+						if (responsecmd.command != responseCommandId) {
+							err = "Response for \"" + cmdInv.commandName + "\" contained invalid command type " + responsecmd.command + ", expected " + responseCommandId;
+							responsecmd = null;
+						}
 					}
-				}
 
-				if (err != null) {
-					Log.write (Log.ERR, "[" + url + "] \"" + cmdInv.commandName + "\" failed: " + err);
+					executeCallback (err, responsecmd);
+					executeCallback = null;
 				}
+			};
+		};
 
-				callback (err, url, cmdinv);
-				callback = null;
-			}
+		if (typeof endCallback == "function") {
+			execute (endCallback);
+		}
+		else {
+			return (new Promise ((resolve, reject) => {
+				execute ((err, responseCommand) => {
+					if (err != null) {
+						reject (Error (err));
+						return;
+					}
+					resolve (responseCommand);
+				});
+			}));
 		}
 	}
 
 	// Execute an HTTP GET operation for the provided URL and save response data into the specified path. Invokes the provided callback when complete, with parameters named "err" (non-null if an error occurred), "url" (the URL used for the invocation), and "destFile" (the path of the file that was written, or null if no file was written). A null targetFilename specifies that the fetch operation should name the file based on response data.
 	fetchUrlFile (url, targetDirectory, targetFilename, callback) {
-		var agent, httpreq, httpres, stream, tempfilename, destfilename;
-
-		Log.write (Log.DEBUG3, "fetchUrlFile begin; url=" + url + " targetDirectory=" + targetDirectory + " targetFilename=" + targetFilename);
-		agent = this;
+		let httpreq, httpres, stream, tempfilename, destfilename;
 		Fs.stat (targetDirectory, statTargetDirectoryComplete);
 		function statTargetDirectoryComplete (err, stats) {
 			if (err != null) {
@@ -1439,7 +1539,7 @@ class SystemAgent {
 		}
 
 		function assignTempFilePath () {
-			tempfilename = targetDirectory + "/urldata_" + new Date ().getTime () + "_" + agent.getRandomString (16);
+			tempfilename = targetDirectory + "/urldata_" + new Date ().getTime () + "_" + this.getRandomString (16);
 			Fs.stat (tempfilename, statTempFilePathComplete);
 		}
 
@@ -1479,7 +1579,7 @@ class SystemAgent {
 		}
 
 		function requestStarted (res) {
-			var matchresult;
+			let matchresult;
 
 			httpres = res;
 			if (httpres.statusCode != 200) {
@@ -1561,7 +1661,7 @@ class SystemAgent {
 
 	// Return a randomly generated string of characters using the specified length
 	getRandomString (length) {
-		var s, chars;
+		let s, chars;
 
 		chars = [ "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9" ];
 		s = "";
@@ -1583,7 +1683,7 @@ class SystemAgent {
 
 	// Return a number value specifying a millisecond delay, suitable for use as a heartbeat period
 	getHeartbeatDelay () {
-		var delay;
+		let delay;
 
 		delay = App.HEARTBEAT_PERIOD;
 		delay += Math.floor (Math.random () * 128);
@@ -1593,7 +1693,7 @@ class SystemAgent {
 
 	// Return a string containing the provided path value with the agent bin path prepended if it doesn't already contain a base path
 	getRunPath (path) {
-		var runpath;
+		let runpath;
 
 		runpath = path;
 		if (runpath.indexOf ("/") !== 0) {
@@ -1603,7 +1703,7 @@ class SystemAgent {
 		return (runpath);
 	}
 
-	// Return a newly created AgentProcess object that launches ffmpeg. workingPath defaults to the application data directory if empty.
+	// Return a newly created ExecProcess object that launches ffmpeg. workingPath defaults to the application data directory if empty.
 	createFfmpegProcess (runArgs, workingPath, processData, processEnded) {
 		let runpath, env;
 
@@ -1622,10 +1722,10 @@ class SystemAgent {
 			}
 		}
 
-		return (new AgentProcess (runpath, runArgs, env, workingPath, processData, processEnded));
+		return (new ExecProcess (runpath, runArgs, env, workingPath, processData, processEnded));
 	}
 
-	// Return a newly created AgentProcess object that launches curl. workingPath defaults to the application data directory if empty.
+	// Return a newly created ExecProcess object that launches curl. workingPath defaults to the application data directory if empty.
 	createCurlProcess (runArgs, workingPath, processData, processEnded) {
 		let runpath, env;
 
@@ -1640,7 +1740,7 @@ class SystemAgent {
 			}
 		}
 
-		return (new AgentProcess (runpath, runArgs, env, workingPath, processData, processEnded));
+		return (new ExecProcess (runpath, runArgs, env, workingPath, processData, processEnded));
 	}
 
 }

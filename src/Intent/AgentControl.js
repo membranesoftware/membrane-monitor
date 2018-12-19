@@ -28,24 +28,51 @@
 * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 * POSSIBILITY OF SUCH DAMAGE.
 */
-// Utility functions for manipulating maps
+// Class that tracks the state of remote system agents
 
 "use strict";
 
 var App = global.App || { };
+var Result = require (App.SOURCE_DIRECTORY + "/Result");
+var Log = require (App.SOURCE_DIRECTORY + "/Log");
+var MapUtil = require (App.SOURCE_DIRECTORY + "/MapUtil");
+var SystemInterface = require (App.SOURCE_DIRECTORY + "/SystemInterface");
+var Agent = require (App.SOURCE_DIRECTORY + "/Intent/Agent");
 
-// Return an item from the map, or null if the item wasn't found. If createFn is a function that returns an object, a new item is created instead.
-function getItem (map, key, createFn) {
-	var item;
-
-	item = map[key];
-	if (item == null) {
-		if (typeof createFn == 'function') {
-			item = createFn ();
-			map[key] = item;
-		}
+class AgentControl {
+	constructor () {
+		// A map of URL hostname values to Agent objects
+		this.agentMap = { };
 	}
 
-	return (item);
+	// Return a string representation of the object
+	toString () {
+		return (`<AgentControl count=${Object.keys (this.agentMap).length}>`);
+	}
+
+	// Store data received with an AgentStatus command
+	updateAgentStatus (statusCommand) {
+		let agent;
+
+		agent = MapUtil.getItem (this.agentMap, statusCommand.params.id, () => {
+			return (new Agent ());
+		});
+		agent.updateStatus (statusCommand);
+	}
+
+	// Return an array containing contacted agents that cause the provided predicate function to generate a true value
+	findAgents (matchFunction) {
+		let m;
+
+		m = [ ];
+		for (let agent of Object.values (this.agentMap)) {
+			if (matchFunction (agent)) {
+				m.push (agent);
+			}
+		}
+
+		return (m);
+	}
 }
-exports.getItem = getItem;
+
+module.exports = AgentControl;

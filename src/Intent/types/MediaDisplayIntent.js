@@ -40,19 +40,19 @@ var IntentBase = require (App.SOURCE_DIRECTORY + "/Intent/IntentBase");
 
 const AGENT_TIMEOUT_PERIOD = 60000; // milliseconds
 
-class WebDisplayIntent extends IntentBase {
+class MediaDisplayIntent extends IntentBase {
 	constructor () {
 		super ();
-		this.name = "WebDisplayIntent";
-		this.displayName = "Track websites";
-		this.description = "Show web content on display agents";
-		this.stateType = "WebDisplayIntentState";
+		this.name = "MediaDisplayIntent";
+		this.displayName = "Play video streams";
+		this.description = "Show video stream content on display agents";
+		this.stateType = "MediaDisplayIntentState";
 	}
 
 	// Configure the intent's state using values in the provided params object and return a Result value
 	doConfigure (configParams) {
-		if (this.isStringArray (configParams.urls)) {
-			this.state.urls = configParams.urls;
+		if (Array.isArray (configParams.items)) {
+			this.state.items = configParams.items;
 		}
 		if (typeof configParams.isShuffle == "boolean") {
 			this.state.isShuffle = configParams.isShuffle;
@@ -73,13 +73,13 @@ class WebDisplayIntent extends IntentBase {
 
 	// Perform actions appropriate for the current state of the application
 	doUpdate () {
-		let agents, cmd, url, curindex;
+		let agents, cmd, curindex, item;
 
-		if (! Array.isArray (this.state.urls)) {
-			this.state.urls = [ ];
+		if (! Array.isArray (this.state.items)) {
+			this.state.items = [ ];
 		}
-		if (! Array.isArray (this.state.urlChoices)) {
-			this.state.urlChoices = [ ];
+		if (! Array.isArray (this.state.itemChoices)) {
+			this.state.itemChoices = [ ];
 		}
 		if (typeof this.state.isShuffle != "boolean") {
 			this.state.isShuffle = false;
@@ -103,7 +103,7 @@ class WebDisplayIntent extends IntentBase {
 			}
 
 			if ((typeof a.lastStatus.monitorServerStatus == "object") && (a.lastStatus.monitorServerStatus != null)) {
-				if (! a.lastStatus.monitorServerStatus.isShowingUrl) {
+				if (! a.lastStatus.monitorServerStatus.isPlaying) {
 					return (true);
 				}
 			}
@@ -117,36 +117,40 @@ class WebDisplayIntent extends IntentBase {
 		});
 
 		for (let agent of agents) {
-			if (this.state.urlChoices.length <= 0) {
-				this.state.urlChoices = this.createChoiceArray (this.state.urls);
-				if (this.state.urlChoices.length <= 0) {
+			if (this.state.itemChoices.length <= 0) {
+				this.state.itemChoices = this.createChoiceArray (this.state.items);
+				if (this.state.itemChoices.length <= 0) {
 					break;
 				}
 			}
 
-			this.state.agentMap[agent.agentId] = this.updateTime + App.systemAgent.getRandomInteger (this.state.minItemDisplayDuration * 1000, this.state.maxItemDisplayDuration * 1000);
 			if (this.state.isShuffle) {
-				curindex = this.getRandomChoice (this.state.urlChoices);
+				curindex = this.getRandomChoice (this.state.itemChoices);
 			}
 			else {
-				curindex = this.state.urlChoices.shift ();
+				curindex = this.state.itemChoices.shift ();
 			}
-			if ((curindex < 0) || (curindex >= this.state.urls.length)) {
+			if ((curindex < 0) || (curindex >= this.state.items.length)) {
 				continue;
 			}
 
-			url = this.state.urls[curindex];
-			cmd = App.systemAgent.createCommand ("ShowWebUrl", SystemInterface.Constant.Monitor, { url: url });
+			this.state.agentMap[agent.agentId] = this.updateTime + App.systemAgent.getRandomInteger (this.state.minItemDisplayDuration * 1000, this.state.maxItemDisplayDuration * 1000);
+			item = this.state.items[curindex];
+
+			cmd = App.systemAgent.createCommand ("PlayMedia", SystemInterface.Constant.Monitor, {
+				mediaName: item.mediaName,
+				streamUrl: item.streamUrl
+			});
 			if (cmd == null) {
 				continue;
 			}
 
 			App.systemAgent.invokeAgentCommand (agent.urlHostname, agent.tcpPort1, SystemInterface.Constant.DefaultInvokePath, cmd, SystemInterface.CommandId.CommandResult, (err) => {
 				if (err != null) {
-					Log.warn (`${this.toString ()} failed to send ShowWebUrl command; err=${err}`);
+					Log.warn (`${this.toString ()} failed to send PlayMedia command; err=${err}`);
 				}
 			});
 		}
 	}
 }
-module.exports = WebDisplayIntent;
+module.exports = MediaDisplayIntent;

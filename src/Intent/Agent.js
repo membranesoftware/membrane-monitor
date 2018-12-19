@@ -28,24 +28,55 @@
 * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 * POSSIBILITY OF SUCH DAMAGE.
 */
-// Utility functions for manipulating maps
+// Class that holds state regarding a remote system agent
 
 "use strict";
 
 var App = global.App || { };
+var Util = require ("util");
+var Log = require (App.SOURCE_DIRECTORY + "/Log");
+var SystemInterface = require (App.SOURCE_DIRECTORY + "/SystemInterface");
 
-// Return an item from the map, or null if the item wasn't found. If createFn is a function that returns an object, a new item is created instead.
-function getItem (map, key, createFn) {
-	var item;
-
-	item = map[key];
-	if (item == null) {
-		if (typeof createFn == 'function') {
-			item = createFn ();
-			map[key] = item;
-		}
+class Agent {
+	constructor () {
+		// Read-only data members
+		this.agentId = "";
+		this.version = "";
+		this.displayName = "";
+		this.applicationName = "";
+		this.urlHostname = "";
+		this.udpPort = 0;
+		this.tcpPort1 = 0;
+		this.tcpPort2 = 0;
+		this.runCount = 0;
+		this.maxRunCount = 0;
+		this.isEnabled = false;
+		this.lastStatus = { };
+		this.lastStatusTime = 0;
 	}
 
-	return (item);
+	// Return a string representation of the agent
+	toString () {
+		return (`<Agent id=${this.agentId} displayName=${this.displayName} urlHostname=${this.urlHostname} version=${this.version} runCount=${this.runCount}/${this.maxRunCount}>`);
+	}
+
+	// Update status with fields from an AgentStatus command
+	updateStatus (statusCommand) {
+		this.lastStatus = statusCommand.params;
+		this.lastStatusTime = new Date ().getTime ();
+
+		this.agentId = statusCommand.params.id;
+		this.version = statusCommand.params.version;
+		this.displayName = statusCommand.params.displayName;
+		this.applicationName = statusCommand.params.applicationName;
+		this.urlHostname = statusCommand.params.urlHostname;
+		this.udpPort = statusCommand.params.udpPort;
+		this.tcpPort1 = statusCommand.params.tcpPort1;
+		this.tcpPort2 = statusCommand.params.tcpPort2;
+		this.runCount = statusCommand.params.runCount;
+		this.maxRunCount = statusCommand.params.maxRunCount;
+		this.isEnabled = statusCommand.params.isEnabled;
+	}
 }
-exports.getItem = getItem;
+
+module.exports = Agent;

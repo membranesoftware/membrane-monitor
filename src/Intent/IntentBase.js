@@ -1,4 +1,34 @@
-// Base class for intents to be run by a master server
+/*
+* Copyright 2018 Membrane Software <author@membranesoftware.com>
+*                 https://membranesoftware.com
+*
+* Redistribution and use in source and binary forms, with or without
+* modification, are permitted provided that the following conditions are met:
+*
+* 1. Redistributions of source code must retain the above copyright notice,
+* this list of conditions and the following disclaimer.
+*
+* 2. Redistributions in binary form must reproduce the above copyright notice,
+* this list of conditions and the following disclaimer in the documentation
+* and/or other materials provided with the distribution.
+*
+* 3. Neither the name of the copyright holder nor the names of its contributors
+* may be used to endorse or promote products derived from this software without
+* specific prior written permission.
+*
+* THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+* AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+* IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+* ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+* LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+* CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+* SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+* INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+* CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+* ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+* POSSIBILITY OF SUCH DAMAGE.
+*/
+// Base class for intents
 
 "use strict";
 
@@ -6,21 +36,24 @@ var App = global.App || { };
 var UuidV4 = require ("uuid/v4");
 var Result = require (App.SOURCE_DIRECTORY + "/Result");
 var Log = require (App.SOURCE_DIRECTORY + "/Log");
-var AgentControl = require (App.SOURCE_DIRECTORY + "/AgentControl");
 var SystemInterface = require (App.SOURCE_DIRECTORY + "/SystemInterface");
+var AgentControl = require (App.SOURCE_DIRECTORY + "/Intent/AgentControl");
 
 const UPDATE_LOG_PERIOD = 120000; // milliseconds
 
 class IntentBase {
 	constructor () {
-		// Reset this AgentControl object to manipulate the intent's agent visibility and usage
-		this.agentControl = new AgentControl ();
+		// Set this AgentControl object to provide the intent with agent visibility
+		this.agentControl = null;
 
 		// Set this value to specify the intent's ID (a UUID string)
 		this.id = "00000000-0000-0000-0000-000000000000";
 
 		// Set this value to specify the intent's name
 		this.name = "Intent";
+
+		// Set this value to specify the intent's group name
+		this.groupName = "";
 
 		// Set this value to specify the intent's display name
 		this.displayName = "Job";
@@ -39,9 +72,6 @@ class IntentBase {
 
 		// This value holds the current time during update calls
 		this.updateTime = 0;
-
-		// This value holds the next time the update method should log a debug status message
-		this.nextUpdateLogTime = 0;
 
 		// Set values in this map for inclusion in status report strings
 		this.statusMap = { };
@@ -66,6 +96,10 @@ class IntentBase {
 		let s, keys, i;
 
 		s = "<Intent id=" + this.id + " name=" + this.name;
+		if (this.groupName != "") {
+			s += " groupName=" + this.groupName;
+		}
+		s += " isActive=" + this.isActive;
 		keys = Object.keys (this.statusMap);
 		if (keys.length > 0) {
 			keys.sort ();
@@ -88,6 +122,7 @@ class IntentBase {
 		else {
 			state = SystemInterface.parseTypeObject (this.stateType, this.state);
 			if (SystemInterface.isError (state)) {
+				Log.warn (`Failed to store intent state; name=${this.name} stateType=${this.stateType} err=${state}`);
 				state = { };
 			}
 		}
@@ -95,6 +130,7 @@ class IntentBase {
 		return ({
 			id: this.id,
 			name: this.name,
+			groupName: this.groupName,
 			displayName: this.displayName,
 			isActive: this.isActive,
 			state: state
@@ -107,6 +143,7 @@ class IntentBase {
 
 		this.id = intentState.id;
 		this.name = intentState.name;
+		this.groupName = intentState.groupName;
 		this.displayName = intentState.displayName;
 		this.isActive = intentState.isActive;
 
@@ -116,7 +153,7 @@ class IntentBase {
 		else {
 			state = SystemInterface.parseTypeObject (this.stateType, intentState.state);
 			if (SystemInterface.isError (state)) {
-				Log.write (Log.WARNING, this.toString () + " failed to parse state object from storage; err=" + state + " state=" + JSON.stringify (intentState.state));
+				Log.warn (`Failed to load intent state; name=${this.name} stateType=${this.stateType} err=${state}`);
 				state = { };
 			}
 
@@ -140,15 +177,6 @@ class IntentBase {
 		}
 
 		now = new Date ().getTime ();
-		if (App.ENABLE_VERBOSE_LOGGING) {
-			Log.write (Log.DEBUG4, this.toString () + " update");
-		}
-		if (now >= this.nextUpdateLogTime) {
-			// Adding random jitter to this delay
-			this.nextUpdateLogTime = now + UPDATE_LOG_PERIOD + App.systemAgent.getRandomInteger (0, 12000);
-			Log.write (Log.DEBUG, this.toString () + " active");
-		}
-
 		this.updateTime = now;
 		this.doUpdate ();
 	}
@@ -158,18 +186,25 @@ class IntentBase {
 		// Default implementation does nothing
 	}
 
-	// Set the intent's active state
-	setActive (isActive) {
-		if (this.isActive == isActive) {
-			return;
-		}
-
-		this.isActive = isActive;
-		this.activeStateChanged ();
+	// Perform actions appropriate when the intent becomes active
+	start () {
+		// Superclass method takes no action
+		this.doStart ();
 	}
 
-	// Perform actions appropriate when the intent's active state has changed
-	activeStateChanged () {
+	// Perform subclass-specific actions appropriate when the intent becomes active. Subclasses are expected to implement this method if needed.
+	doStart () {
+		// Default implementation does nothing
+	}
+
+	// Perform actions appropriate when the intent becomes inactive
+	stop () {
+		// Superclass method takes no action
+		this.doStop ();
+	}
+
+	// Perform subclass-specific actions appropriate when the intent becomes inactive. Subclasses are expected to implement this method if needed.
+	doStop () {
 		// Default implementation does nothing
 	}
 
@@ -179,19 +214,6 @@ class IntentBase {
 
 		diff = this.updateTime - startTime;
 		return (diff >= period);
-	}
-
-	// Return an object containing a command with the default agent prefix and the provided parameters, or null if the command could not be validated, in which case an error log message is generated
-	createCommand (commandName, commandType, commandParams) {
-		let cmd;
-
-		cmd = SystemInterface.createCommand (App.systemAgent.getCommandPrefix (), commandName, commandType, commandParams);
-		if (SystemInterface.isError (cmd)) {
-			Log.write (Log.ERR, this.toString () + " failed to create command invocation: " + cmd);
-			return (null);
-		}
-
-		return (cmd);
 	}
 
 	// Return a boolean value indicating if the provided item is an object and is not null
@@ -245,20 +267,39 @@ class IntentBase {
 		return (a);
 	}
 
-	// Return an object containing a command with the default agent prefix and the provided parameters, or null if the command could not be validated, in which case an error log message is generated
-	createCommand (commandName, commandType, commandParams) {
-		let cmd;
+	// Return a newly created array containing indexes for use in tracking choices from a source array
+	createChoiceArray (sourceArray) {
+		let a;
 
-		cmd = SystemInterface.createCommand (App.systemAgent.getCommandPrefix (), commandName, commandType, commandParams);
-		if (SystemInterface.isError (cmd)) {
-			Log.write (Log.ERR, this.toString () + " failed to create command invocation; commandName=" + commandName + " err=\"" + cmd + "\"");
-			if (App.ENABLE_VERBOSE_LOGGING) {
-				Log.write (Log.ERR, this.toString () + " createCommand call stack; commandName=" + commandName + "\n" + new Error ().stack);
-			}
-			return (null);
+		a = [ ];
+		for (let i = 0; i < sourceArray.length; ++i) {
+			a.push (i);
 		}
 
-		return (cmd);
+		return (a);
+	}
+
+	// Choose an index at random from the provided choice array, while updating the array to track the chosen item. Returns the chosen index, or -1 if no choices were available
+	getRandomChoice (choiceArray) {
+		let pos, result;
+
+		if (choiceArray.length <= 0) {
+			return (-1);
+		}
+
+		pos = App.systemAgent.getRandomInteger (0, choiceArray.length - 1);
+		result = choiceArray[pos];
+		choiceArray.splice (pos, 1);
+
+		return (result);
+	}
+
+	// Return an array containing contacted agents that cause the provided predicate function to generate a true value
+	findAgents (matchFunction) {
+		if (this.agentControl == null) {
+			return ([ ]);
+		}
+		return (this.agentControl.findAgents (matchFunction));
 	}
 }
 

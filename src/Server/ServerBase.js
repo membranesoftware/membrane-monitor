@@ -1,3 +1,33 @@
+/*
+* Copyright 2018 Membrane Software <author@membranesoftware.com>
+*                 https://membranesoftware.com
+*
+* Redistribution and use in source and binary forms, with or without
+* modification, are permitted provided that the following conditions are met:
+*
+* 1. Redistributions of source code must retain the above copyright notice,
+* this list of conditions and the following disclaimer.
+*
+* 2. Redistributions in binary form must reproduce the above copyright notice,
+* this list of conditions and the following disclaimer in the documentation
+* and/or other materials provided with the distribution.
+*
+* 3. Neither the name of the copyright holder nor the names of its contributors
+* may be used to endorse or promote products derived from this software without
+* specific prior written permission.
+*
+* THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+* AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+* IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+* ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+* LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+* CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+* SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+* INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+* CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+* ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+* POSSIBILITY OF SUCH DAMAGE.
+*/
 // Base class for server objects
 
 "use strict";
@@ -65,14 +95,13 @@ class ServerBase {
 
 		fields = this.parseConfiguration (configParams);
 		if (SystemInterface.isError (fields)) {
-			Log.write (Log.ERR, `${this.toString ()} Configuration parse error: ${fields}`);
+			Log.err (`${this.toString ()} configuration parse error; err=${fields}`);
 			return;
 		}
 
 		this.configureMap = fields;
 		this.deltaConfiguration = configParams;
 		this.isConfigured = true;
-		Log.write (Log.DEBUG, `${this.toString ()} configured; baseConfiguration=${JSON.stringify (this.baseConfiguration)} deltaConfiguration=${JSON.stringify (this.deltaConfiguration)} configureMap=${JSON.stringify (this.configureMap)}`);
 	}
 
 	// Return an object containing configuration fields parsed from the server's base configuration combined with the provided parameters, or an error message if the parse failed
@@ -106,10 +135,15 @@ class ServerBase {
 			return;
 		}
 
-		this.doStart (startCallback);
+		this.doStart ((err) => {
+			if (err == null) {
+				this.isRunning = true;
+			}
+			startCallback (err);
+		});
 	}
 
-	// Start the server's operation and invoke the provided callback when complete, with an "err" parameter (non-null if an error occurred). If the start operation succeeds, isRunning is set to true.
+	// Execute subclass-specific start operations and invoke the provided callback when complete, with an "err" parameter (non-null if an error occurred)
 	doStart (startCallback) {
 		// Default implementation does nothing
 		process.nextTick (startCallback);
@@ -117,8 +151,13 @@ class ServerBase {
 
 	// Stop the server's operation and set isRunning to false, and invoke the provided callback when complete
 	stop (stopCallback) {
-		// Default implementation clears isRunning and takes no other action
 		this.isRunning = false;
+		this.doStop (stopCallback);
+	}
+
+	// Execute subclass-specific stop operations and invoke the provided callback when complete
+	doStop (stopCallback) {
+		// Default implementation does nothing
 		process.nextTick (stopCallback);
 	}
 
@@ -150,18 +189,19 @@ class ServerBase {
 		fields[fieldname] = cmd.params;
 	}
 
-	// Provide server configuration data by adding an appropriate field to an AgentConfiguration params object, or take no action if no server-specific configuration data exists
+	// Provide server configuration data by adding an appropriate field to an AgentConfiguration params object
 	getConfiguration (agentConfiguration) {
 		let c;
 
 		c = { };
+		for (let i in this.baseConfiguration) {
+			c[i] = this.baseConfiguration[i];
+		}
 		for (let i in this.deltaConfiguration) {
 			c[i] = this.deltaConfiguration[i];
 		}
 		this.doGetConfiguration (c);
-		if (Object.keys (c).length > 0) {
-			agentConfiguration[this.getAgentConfigurationKey ()] = c;
-		}
+		agentConfiguration[this.getAgentConfigurationKey ()] = c;
 	}
 
 	// Add subclass-specific fields to the provided server configuration object, covering default values not present in the delta configuration
@@ -175,34 +215,11 @@ class ServerBase {
 
 		cmd = SystemInterface.createCommand (App.systemAgent.getCommandPrefix (), commandName, commandType, commandParams);
 		if (SystemInterface.isError (cmd)) {
-			Log.write (Log.ERR, this.toString () + " failed to create command invocation; commandName=" + commandName + " err=\"" + cmd + "\"");
-			if (App.ENABLE_VERBOSE_LOGGING) {
-				Log.write (Log.ERR, this.toString () + " createCommand call stack; commandName=" + commandName + "\n" + new Error ().stack);
-			}
+			Log.err (`${this.toString ()} failed to create command invocation; commandName=${commandName} err=${cmd}`);
 			return (null);
 		}
 
 		return (cmd);
-	}
-
-	// Publish a WriteEvents command containing a record with the provided fields. If isClosed is true, the record prefix is set to reflect a closed state.
-	publishRecord (recordId, recordTime, commandName, commandType, commandParams, isClosed) {
-		let cmd, result;
-
-		cmd = this.createCommand (commandName, commandType, commandParams);
-		if (cmd == null) {
-			return;
-		}
-		SystemInterface.setRecordFields (cmd, recordId, recordTime);
-		if (isClosed === true) {
-			SystemInterface.closeRecord (cmd);
-		}
-
-		result = App.systemAgent.publishWriteEvents ([cmd]);
-		if (result != Result.SUCCESS) {
-			// TODO: Possibly store the event and try to write it again later
-			Log.write (Log.ERR, this.toString () + " Failed to write event record; recordId=\"" + recordId + "\" commandName=\"" + commandName + "\"");
-		}
 	}
 }
 
