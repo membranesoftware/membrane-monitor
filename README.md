@@ -7,7 +7,8 @@ Primary functions:
 - Store a playlist of URLs and cycle Chromium through the list at regular intervals.
 - Launch [omxplayer](https://www.raspberrypi.org/documentation/raspbian/applications/omxplayer.md) to display a particular video stream, as specified by URL.
 - Store a playlist of video streams and cycle omxplayer through the list at regular intervals.
-- Accept commands received from the [Membrane Control](https://github.com/membranesoftware/membrane-control) interface
+- Transfer stream data to local storage, enabling playback from a cache without network access.
+- Accept commands received from the [Membrane Control](https://github.com/membranesoftware/membrane-control) interface.
 
 Builds: https://membranesoftware.com/membrane-monitor/
 
