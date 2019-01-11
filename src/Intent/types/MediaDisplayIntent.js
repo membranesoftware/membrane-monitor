@@ -1,5 +1,5 @@
 /*
-* Copyright 2018 Membrane Software <author@membranesoftware.com>
+* Copyright 2019 Membrane Software <author@membranesoftware.com>
 *                 https://membranesoftware.com
 *
 * Redistribution and use in source and binary forms, with or without
@@ -30,13 +30,18 @@
 */
 "use strict";
 
-var App = global.App || { };
-var Result = require (App.SOURCE_DIRECTORY + "/Result");
-var Log = require (App.SOURCE_DIRECTORY + "/Log");
-var SystemInterface = require (App.SOURCE_DIRECTORY + "/SystemInterface");
-var Agent = require (App.SOURCE_DIRECTORY + "/Intent/Agent");
-var AgentControl = require (App.SOURCE_DIRECTORY + "/Intent/AgentControl");
-var IntentBase = require (App.SOURCE_DIRECTORY + "/Intent/IntentBase");
+const App = global.App || { };
+const Path = require ("path");
+const Fs = require ("fs");
+const Result = require (App.SOURCE_DIRECTORY + "/Result");
+const Log = require (App.SOURCE_DIRECTORY + "/Log");
+const SystemInterface = require (App.SOURCE_DIRECTORY + "/SystemInterface");
+const MapUtil = require (App.SOURCE_DIRECTORY + "/MapUtil");
+const Agent = require (App.SOURCE_DIRECTORY + "/Intent/Agent");
+const AgentControl = require (App.SOURCE_DIRECTORY + "/Intent/AgentControl");
+const Task = require (App.SOURCE_DIRECTORY + "/Task/Task");
+const HlsIndexParser = require (App.SOURCE_DIRECTORY + "/Common/HlsIndexParser");
+const IntentBase = require (App.SOURCE_DIRECTORY + "/Intent/IntentBase");
 
 const AGENT_TIMEOUT_PERIOD = 60000; // milliseconds
 
@@ -67,13 +72,19 @@ class MediaDisplayIntent extends IntentBase {
 				this.state.maxItemDisplayDuration = configParams.maxItemDisplayDuration;
 			}
 		}
+		if (typeof configParams.minStartPositionDelta == "number") {
+			this.state.minStartPositionDelta = configParams.minStartPositionDelta;
+		}
+		if (typeof configParams.maxStartPositionDelta == "number") {
+			this.state.maxStartPositionDelta = configParams.maxStartPositionDelta;
+		}
 
 		return (Result.SUCCESS);
 	}
 
 	// Perform actions appropriate for the current state of the application
 	doUpdate () {
-		let agents, cmd, curindex, item;
+		let agents;
 
 		if (! Array.isArray (this.state.items)) {
 			this.state.items = [ ];
@@ -93,6 +104,12 @@ class MediaDisplayIntent extends IntentBase {
 		}
 		if (typeof this.state.maxItemDisplayDuration != "number") {
 			this.state.maxItemDisplayDuration = 900;
+		}
+		if (typeof this.state.minStartPositionDelta != "number") {
+			this.state.minStartPositionDelta = 0;
+		}
+		if (typeof this.state.maxStartPositionDelta != "number") {
+			this.state.maxStartPositionDelta = 0;
 		}
 
 		agents = this.findAgents ((a) => {
@@ -117,40 +134,117 @@ class MediaDisplayIntent extends IntentBase {
 		});
 
 		for (let agent of agents) {
-			if (this.state.itemChoices.length <= 0) {
-				this.state.itemChoices = this.createChoiceArray (this.state.items);
-				if (this.state.itemChoices.length <= 0) {
-					break;
-				}
-			}
-
-			if (this.state.isShuffle) {
-				curindex = this.getRandomChoice (this.state.itemChoices);
-			}
-			else {
-				curindex = this.state.itemChoices.shift ();
-			}
-			if ((curindex < 0) || (curindex >= this.state.items.length)) {
-				continue;
-			}
-
-			this.state.agentMap[agent.agentId] = this.updateTime + App.systemAgent.getRandomInteger (this.state.minItemDisplayDuration * 1000, this.state.maxItemDisplayDuration * 1000);
-			item = this.state.items[curindex];
-
-			cmd = App.systemAgent.createCommand ("PlayMedia", SystemInterface.Constant.Monitor, {
-				mediaName: item.mediaName,
-				streamUrl: item.streamUrl
-			});
-			if (cmd == null) {
-				continue;
-			}
-
-			App.systemAgent.invokeAgentCommand (agent.urlHostname, agent.tcpPort1, SystemInterface.Constant.DefaultInvokePath, cmd, SystemInterface.CommandId.CommandResult, (err) => {
-				if (err != null) {
-					Log.warn (`${this.toString ()} failed to send PlayMedia command; err=${err}`);
-				}
-			});
+			this.playNextItem (agent);
 		}
+	}
+
+	// Select a stream item and execute a play command on the provided target agent
+	playNextItem (agent) {
+		let curindex, item;
+
+		if (this.state.itemChoices.length <= 0) {
+			this.state.itemChoices = this.createChoiceArray (this.state.items);
+			if (this.state.itemChoices.length <= 0) {
+				return;
+			}
+		}
+
+		if (this.state.isShuffle) {
+			curindex = this.getRandomChoice (this.state.itemChoices);
+		}
+		else {
+			curindex = this.state.itemChoices.shift ();
+		}
+		if ((curindex < 0) || (curindex >= this.state.items.length)) {
+			return;
+		}
+
+		item = this.state.items[curindex];
+		if (item.streamUrl != "") {
+			this.executePlayMedia (agent, item);
+		}
+		else if (item.streamId != "") {
+			this.executePlayCacheStream (agent, item);
+		}
+	}
+
+	// Execute a PlayMedia command for the provided target agent and stream item
+	executePlayMedia (agent, item) {
+		let cmd, params, playcmd, playparams, streamurl;
+
+		streamurl = item.streamUrl;
+		if (item.streamId != "") {
+			playparams = {
+				streamId: item.streamId
+			};
+			if (typeof item.startPosition == "number") {
+				playparams.startPosition = item.startPosition;
+			}
+			if ((this.state.minStartPositionDelta > 0) || (this.state.maxStartPositionDelta > 0)) {
+				playparams.minStartPositionDelta = this.state.minStartPositionDelta;
+				playparams.maxStartPositionDelta = this.state.maxStartPositionDelta;
+			}
+			playcmd = App.systemAgent.createCommand ("GetHlsManifest", SystemInterface.Constant.Stream, playparams);
+			if (playcmd == null) {
+				return;
+			}
+			streamurl += "?" + SystemInterface.Constant.UrlQueryParameter + "=" + encodeURIComponent (JSON.stringify (playcmd));
+		}
+
+		params = {
+			mediaName: item.mediaName,
+			streamUrl: streamurl
+		};
+		if (item.streamId != "") {
+			params.streamId = item.streamId;
+		}
+		if (typeof item.startPosition == "number") {
+			params.startPosition = item.startPosition;
+		}
+		if ((this.state.minStartPositionDelta > 0) || (this.state.maxStartPositionDelta > 0)) {
+			params.minStartPositionDelta = this.state.minStartPositionDelta;
+			params.maxStartPositionDelta = this.state.maxStartPositionDelta;
+		}
+
+		cmd = App.systemAgent.createCommand ("PlayMedia", SystemInterface.Constant.Monitor, params);
+		if (cmd == null) {
+			return;
+		}
+
+		this.state.agentMap[agent.agentId] = this.updateTime + App.systemAgent.getRandomInteger (this.state.minItemDisplayDuration * 1000, this.state.maxItemDisplayDuration * 1000);
+		App.systemAgent.invokeAgentCommand (agent.urlHostname, agent.tcpPort1, SystemInterface.Constant.DefaultInvokePath, cmd, SystemInterface.CommandId.CommandResult, (err) => {
+			if (err != null) {
+				Log.debug (`${this.toString ()} failed to send PlayMedia command; err=${err}`);
+			}
+		});
+	}
+
+	// Execute a PlayCacheStream command for the provided target agent and stream item
+	executePlayCacheStream (agent, item) {
+		let cmd, params;
+
+		params = {
+			streamId: item.streamId
+		};
+		if (typeof item.startPosition == "number") {
+			params.startPosition = item.startPosition;
+		}
+		if ((this.state.minStartPositionDelta > 0) || (this.state.maxStartPositionDelta > 0)) {
+			params.minStartPositionDelta = this.state.minStartPositionDelta;
+			params.maxStartPositionDelta = this.state.maxStartPositionDelta;
+		}
+
+		cmd = App.systemAgent.createCommand ("PlayCacheStream", SystemInterface.Constant.Monitor, params);
+		if (cmd == null) {
+			return;
+		}
+
+		this.state.agentMap[agent.agentId] = this.updateTime + App.systemAgent.getRandomInteger (this.state.minItemDisplayDuration * 1000, this.state.maxItemDisplayDuration * 1000);
+		App.systemAgent.invokeAgentCommand (agent.urlHostname, agent.tcpPort1, SystemInterface.Constant.DefaultInvokePath, cmd, SystemInterface.CommandId.CommandResult, (err) => {
+			if (err != null) {
+				Log.debug (`${this.toString ()} failed to send PlayCacheStream command; err=${err}`);
+			}
+		});
 	}
 }
 module.exports = MediaDisplayIntent;

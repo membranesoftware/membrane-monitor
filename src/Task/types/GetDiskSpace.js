@@ -28,51 +28,55 @@
 * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 * POSSIBILITY OF SUCH DAMAGE.
 */
-// Class that tracks the state of remote system agents
-
 "use strict";
 
 const App = global.App || { };
-const Result = require (App.SOURCE_DIRECTORY + "/Result");
+const Path = require ("path");
 const Log = require (App.SOURCE_DIRECTORY + "/Log");
-const MapUtil = require (App.SOURCE_DIRECTORY + "/MapUtil");
+const FsUtil = require (App.SOURCE_DIRECTORY + "/FsUtil");
 const SystemInterface = require (App.SOURCE_DIRECTORY + "/SystemInterface");
-const Agent = require (App.SOURCE_DIRECTORY + "/Intent/Agent");
+const TaskBase = require (App.SOURCE_DIRECTORY + "/Task/TaskBase");
 
-class AgentControl {
+class GetDiskSpace extends TaskBase {
 	constructor () {
-		// A map of URL hostname values to Agent objects
-		this.agentMap = { };
-	}
+		super ();
+		this.name = "Get disk space";
+		this.description = "Gather data regarding available disk space for a target path and generate a result object with number fields \"total\", \"used\", and \"free\", specified in bytes";
 
-	// Return a string representation of the object
-	toString () {
-		return (`<AgentControl count=${Object.keys (this.agentMap).length}>`);
-	}
-
-	// Store data received with an AgentStatus command
-	updateAgentStatus (statusCommand) {
-		let agent;
-
-		agent = MapUtil.getItem (this.agentMap, statusCommand.params.id, () => {
-			return (new Agent ());
-		});
-		agent.updateStatus (statusCommand);
-	}
-
-	// Return an array containing contacted agents that cause the provided predicate function to generate a true value
-	findAgents (matchFunction) {
-		let m;
-
-		m = [ ];
-		for (let agent of Object.values (this.agentMap)) {
-			if (matchFunction (agent)) {
-				m.push (agent);
+		this.configureParams = [
+			{
+				name: "targetPath",
+				type: "string",
+				flags: SystemInterface.ParamFlag.Required | SystemInterface.ParamFlag.NotEmpty,
+				description: "The path to the target directory for the operation"
 			}
-		}
+		];
 
-		return (m);
+		this.runSourcePath = Path.join (App.BIN_DIRECTORY, "GetDiskSpace_" + process.platform + ".js");
+	}
+
+	// Subclass method. Implementations should execute task actions and call end when complete.
+	doRun () {
+		FsUtil.fileExists (this.runSourcePath).then ((exists) => {
+			let fn;
+
+			try {
+				fn = require (this.runSourcePath);
+			}
+			catch (e) {
+				return (Promise.reject (e));
+			}
+
+			return (fn (this));
+		}).then ((data) => {
+			this.resultObject = data;
+			this.setPercentComplete (100);
+			this.isSuccess = true;
+		}).catch ((err) => {
+			Log.debug (`${this.toString ()} failed; err=${err}`);
+		}).then (() => {
+			this.end ();
+		});
 	}
 }
-
-module.exports = AgentControl;
+module.exports = GetDiskSpace;

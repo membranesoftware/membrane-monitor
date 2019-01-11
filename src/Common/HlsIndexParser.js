@@ -28,51 +28,60 @@
 * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 * POSSIBILITY OF SUCH DAMAGE.
 */
-// Class that tracks the state of remote system agents
-
-"use strict";
+// Parser for HLS index data
 
 const App = global.App || { };
-const Result = require (App.SOURCE_DIRECTORY + "/Result");
 const Log = require (App.SOURCE_DIRECTORY + "/Log");
-const MapUtil = require (App.SOURCE_DIRECTORY + "/MapUtil");
-const SystemInterface = require (App.SOURCE_DIRECTORY + "/SystemInterface");
-const Agent = require (App.SOURCE_DIRECTORY + "/Intent/Agent");
 
-class AgentControl {
-	constructor () {
-		// A map of URL hostname values to Agent objects
-		this.agentMap = { };
-	}
+// Return an object containing records parsed from the provided index data, or null if the data could not be parsed
+function parse (indexData) {
+	var data, lines, i, line, m, lastduration, pos, val;
 
-	// Return a string representation of the object
-	toString () {
-		return (`<AgentControl count=${Object.keys (this.agentMap).length}>`);
-	}
+	data = {
+		segmentCount: 0,
+		segmentFilenames: [ ],
+		segmentLengths: [ ],
+		segmentPositions: [ ],
+		hlsTargetDuration: 0
+	};
+	lastduration = null;
+	pos = 0;
+	lines = indexData.split ("\n");
+	for (i = 0; i < lines.length; ++i) {
+		line = lines[i];
 
-	// Store data received with an AgentStatus command
-	updateAgentStatus (statusCommand) {
-		let agent;
-
-		agent = MapUtil.getItem (this.agentMap, statusCommand.params.id, () => {
-			return (new Agent ());
-		});
-		agent.updateStatus (statusCommand);
-	}
-
-	// Return an array containing contacted agents that cause the provided predicate function to generate a true value
-	findAgents (matchFunction) {
-		let m;
-
-		m = [ ];
-		for (let agent of Object.values (this.agentMap)) {
-			if (matchFunction (agent)) {
-				m.push (agent);
+		m = line.match (/^#EXTINF:([0-9\.]+)/);
+		if (m != null) {
+			lastduration = parseFloat (m[1]);
+			if (isNaN (lastduration)) {
+				lastduration = null;
 			}
+			continue;
 		}
 
-		return (m);
-	}
-}
+		m = line.match (/^(.+)\.ts/);
+		if (m != null) {
+			if (lastduration !== null) {
+				++(data.segmentCount);
+				data.segmentFilenames.push (line);
+				data.segmentLengths.push (lastduration);
+				data.segmentPositions.push (parseFloat (pos.toFixed (5)));
+				pos += lastduration;
+				lastduration = null;
+			}
+			continue;
+		}
 
-module.exports = AgentControl;
+		m = line.match (/^#EXT-X-TARGETDURATION:([0-9]+)/);
+		if (m != null) {
+			val = parseInt (m[1], 10);
+			if (! isNaN (val)) {
+				data.hlsTargetDuration = val;
+			}
+			continue;
+		}
+	}
+
+	return (data);
+}
+exports.parse = parse;
