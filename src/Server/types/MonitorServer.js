@@ -65,6 +65,7 @@ class MonitorServer extends ServerBase {
 		this.configureParams = [
 		];
 
+		this.isPlaying = false;
 		this.playProcess = null;
 		this.playMediaName = "";
 		this.isBrowserRunning = false;
@@ -275,8 +276,8 @@ class MonitorServer extends ServerBase {
 			totalStorage: this.totalStorage,
 			streamCount: Object.keys (this.streamMap).length,
 			thumbnailPath: THUMBNAIL_PATH,
-			isPlaying: (this.playProcess != null),
-			mediaName: (this.playProcess != null) ? this.playMediaName : "",
+			isPlaying: this.isPlaying,
+			mediaName: this.isPlaying ? this.playMediaName : "",
 			isShowingUrl: this.isBrowserRunning,
 			showUrl: this.browserUrl
 		};
@@ -334,10 +335,13 @@ class MonitorServer extends ServerBase {
 		if (cmdInv.prefix[SystemInterface.Constant.AgentIdPrefixField] != App.systemAgent.agentId) {
 			App.systemAgent.removeIntentGroup (this.name);
 		}
+
 		setTimeout (() => {
 			this.clear (clearComplete);
 		}, 0);
 		clearComplete = () => {
+			this.playMediaName = cmdInv.params.mediaName;
+			this.isPlaying = true;
 			this.activateDesktopBlank (activateDesktopBlankComplete);
 		};
 		activateDesktopBlankComplete = () => {
@@ -346,7 +350,6 @@ class MonitorServer extends ServerBase {
 				TARGET_MEDIA: cmdInv.params.streamUrl
 			}, "", null, playProcessEnded);
 			this.playProcess = proc;
-			this.playMediaName = cmdInv.params.mediaName;
 		};
 
 		playProcessEnded = () => {
@@ -354,6 +357,7 @@ class MonitorServer extends ServerBase {
 				return;
 			}
 			this.playProcess = null;
+			this.isPlaying = false;
 		};
 
 		return (this.createCommand ("CommandResult", SystemInterface.Constant.Monitor, {
@@ -435,6 +439,8 @@ class MonitorServer extends ServerBase {
 			this.clear (clearComplete);
 		};
 		clearComplete = () => {
+			this.playMediaName = item.params.name;
+			this.isPlaying = true;
 			this.activateDesktopBlank (activateDesktopBlankComplete);
 		};
 		activateDesktopBlankComplete = () => {
@@ -443,7 +449,6 @@ class MonitorServer extends ServerBase {
 				TARGET_MEDIA: indexpath
 			}, "", null, playProcessEnded);
 			this.playProcess = proc;
-			this.playMediaName = item.params.name;
 		};
 
 		playProcessEnded = () => {
@@ -451,6 +456,7 @@ class MonitorServer extends ServerBase {
 				return;
 			}
 			this.playProcess = null;
+			this.isPlaying = false;
 		};
 
 		return (this.createCommand ("CommandResult", SystemInterface.Constant.Monitor, {
@@ -529,6 +535,7 @@ class MonitorServer extends ServerBase {
 			return;
 		}
 		this.playProcess = null;
+		this.isPlaying = false;
 
 		proc = new ExecProcess (OMXPLAYER_STOP_PROCESS_NAME, [ ], {
 			SIGNAL_TYPE: "TERM"

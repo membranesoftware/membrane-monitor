@@ -39,6 +39,7 @@ const AgentControl = require (App.SOURCE_DIRECTORY + "/Intent/AgentControl");
 const IntentBase = require (App.SOURCE_DIRECTORY + "/Intent/IntentBase");
 
 const AGENT_TIMEOUT_PERIOD = 60000; // milliseconds
+const AGENT_COMMAND_WAIT_PERIOD = 5000; // milliseconds
 
 class WebDisplayIntent extends IntentBase {
 	constructor () {
@@ -71,6 +72,26 @@ class WebDisplayIntent extends IntentBase {
 		return (Result.SUCCESS);
 	}
 
+	// Perform actions appropriate when the intent becomes active
+	doStart () {
+		this.lastCommandTimeMap = { };
+		if (App.AUTHORIZE_SECRET == "") {
+			this.authToken = "";
+		}
+		else {
+			this.authToken = App.systemAgent.accessControl.createSession ();
+			App.systemAgent.accessControl.setSessionSustained (this.authToken, true);
+		}
+	}
+
+	// Perform actions appropriate when the intent becomes inactive
+	doStop () {
+		if (this.authToken != "") {
+			App.systemAgent.accessControl.setSessionSustained (this.authToken, false);
+			this.authToken = "";
+		}
+	}
+
 	// Perform actions appropriate for the current state of the application
 	doUpdate () {
 		let agents, cmd, url, curindex;
@@ -99,6 +120,11 @@ class WebDisplayIntent extends IntentBase {
 			let t;
 
 			if ((this.updateTime - a.lastStatusTime) >= AGENT_TIMEOUT_PERIOD) {
+				return (false);
+			}
+
+			t = this.lastCommandTimeMap[a.agentId];
+			if ((typeof t == "number") && ((t + AGENT_COMMAND_WAIT_PERIOD) > this.updateTime)) {
 				return (false);
 			}
 
@@ -136,11 +162,12 @@ class WebDisplayIntent extends IntentBase {
 			}
 
 			url = this.state.urls[curindex];
-			cmd = App.systemAgent.createCommand ("ShowWebUrl", SystemInterface.Constant.Monitor, { url: url });
+			cmd = App.systemAgent.createCommand ("ShowWebUrl", SystemInterface.Constant.Monitor, { url: url }, App.AUTHORIZE_SECRET, this.authToken);
 			if (cmd == null) {
 				continue;
 			}
 
+			this.lastCommandTimeMap[agent.agentId] = this.updateTime;
 			App.systemAgent.invokeAgentCommand (agent.urlHostname, agent.tcpPort1, SystemInterface.Constant.DefaultInvokePath, cmd, SystemInterface.CommandId.CommandResult, (err) => {
 				if (err != null) {
 					Log.warn (`${this.toString ()} failed to send ShowWebUrl command; err=${err}`);

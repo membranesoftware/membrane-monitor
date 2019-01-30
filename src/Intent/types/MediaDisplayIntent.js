@@ -44,6 +44,7 @@ const HlsIndexParser = require (App.SOURCE_DIRECTORY + "/Common/HlsIndexParser")
 const IntentBase = require (App.SOURCE_DIRECTORY + "/Intent/IntentBase");
 
 const AGENT_TIMEOUT_PERIOD = 60000; // milliseconds
+const AGENT_COMMAND_WAIT_PERIOD = 5000; // milliseconds
 
 class MediaDisplayIntent extends IntentBase {
 	constructor () {
@@ -52,6 +53,26 @@ class MediaDisplayIntent extends IntentBase {
 		this.displayName = "Play video streams";
 		this.description = "Show video stream content on display agents";
 		this.stateType = "MediaDisplayIntentState";
+	}
+
+	// Perform actions appropriate when the intent becomes active
+	doStart () {
+		this.lastCommandTimeMap = { };
+		if (App.AUTHORIZE_SECRET == "") {
+			this.authToken = "";
+		}
+		else {
+			this.authToken = App.systemAgent.accessControl.createSession ();
+			App.systemAgent.accessControl.setSessionSustained (this.authToken, true);
+		}
+	}
+
+	// Perform actions appropriate when the intent becomes inactive
+	doStop () {
+		if (this.authToken != "") {
+			App.systemAgent.accessControl.setSessionSustained (this.authToken, false);
+			this.authToken = "";
+		}
 	}
 
 	// Configure the intent's state using values in the provided params object and return a Result value
@@ -116,6 +137,11 @@ class MediaDisplayIntent extends IntentBase {
 			let t;
 
 			if ((this.updateTime - a.lastStatusTime) >= AGENT_TIMEOUT_PERIOD) {
+				return (false);
+			}
+
+			t = this.lastCommandTimeMap[a.agentId];
+			if ((typeof t == "number") && ((t + AGENT_COMMAND_WAIT_PERIOD) > this.updateTime)) {
 				return (false);
 			}
 
@@ -206,11 +232,12 @@ class MediaDisplayIntent extends IntentBase {
 			params.maxStartPositionDelta = this.state.maxStartPositionDelta;
 		}
 
-		cmd = App.systemAgent.createCommand ("PlayMedia", SystemInterface.Constant.Monitor, params);
+		cmd = App.systemAgent.createCommand ("PlayMedia", SystemInterface.Constant.Monitor, params, App.AUTHORIZE_SECRET, this.authToken);
 		if (cmd == null) {
 			return;
 		}
 
+		this.lastCommandTimeMap[agent.agentId] = this.updateTime;
 		this.state.agentMap[agent.agentId] = this.updateTime + App.systemAgent.getRandomInteger (this.state.minItemDisplayDuration * 1000, this.state.maxItemDisplayDuration * 1000);
 		App.systemAgent.invokeAgentCommand (agent.urlHostname, agent.tcpPort1, SystemInterface.Constant.DefaultInvokePath, cmd, SystemInterface.CommandId.CommandResult, (err) => {
 			if (err != null) {
@@ -234,11 +261,12 @@ class MediaDisplayIntent extends IntentBase {
 			params.maxStartPositionDelta = this.state.maxStartPositionDelta;
 		}
 
-		cmd = App.systemAgent.createCommand ("PlayCacheStream", SystemInterface.Constant.Monitor, params);
+		cmd = App.systemAgent.createCommand ("PlayCacheStream", SystemInterface.Constant.Monitor, params, App.AUTHORIZE_SECRET, this.authToken);
 		if (cmd == null) {
 			return;
 		}
 
+		this.lastCommandTimeMap[agent.agentId] = this.updateTime;
 		this.state.agentMap[agent.agentId] = this.updateTime + App.systemAgent.getRandomInteger (this.state.minItemDisplayDuration * 1000, this.state.maxItemDisplayDuration * 1000);
 		App.systemAgent.invokeAgentCommand (agent.urlHostname, agent.tcpPort1, SystemInterface.Constant.DefaultInvokePath, cmd, SystemInterface.CommandId.CommandResult, (err) => {
 			if (err != null) {
