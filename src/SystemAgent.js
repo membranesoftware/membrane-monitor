@@ -164,10 +164,7 @@ class SystemAgent {
 			serverconfigs = [ ];
 		}
 		if (serverconfigs.length <= 0) {
-			process.nextTick (() => {
-				startCompleteCallback ("No server types configured");
-			});
-			return;
+			Log.notice ("No server types configured, remote functionality may be limited");
 		}
 
 		for (let config of serverconfigs) {
@@ -564,7 +561,8 @@ class SystemAgent {
 				token = "";
 				Log.debug (`WebSocket client connected; address="${clientaddress}"`);
 
-				client.on ("disconnect", () => {
+				client.setMaxListeners (0);
+				client.once ("disconnect", () => {
 					Log.debug (`WebSocket client disconnected; address="${clientaddress}"`);
 					if (token != "") {
 						this.accessControl.setSessionSustained (token, false);
@@ -1979,28 +1977,6 @@ class SystemAgent {
 		delay += Math.floor (Math.random () * 128);
 
 		return (delay);
-	}
-
-	// Return a newly created ExecProcess object that launches ffmpeg. workingPath defaults to the application data directory if empty.
-	createFfmpegProcess (runArgs, workingPath, processData, processEnded) {
-		let runpath, env;
-
-		runpath = App.FFMPEG_PATH;
-		env = { };
-		if (runpath == "") {
-			if (process.platform == "win32") {
-				runpath = "ffmpeg/bin/ffmpeg.exe";
-			}
-			else if (process.platform == "linux") {
-				runpath = "ffmpeg/ffmpeg";
-				env.LD_LIBRARY_PATH = App.BIN_DIRECTORY + "/ffmpeg/lib";
-			}
-			else {
-				runpath = "ffmpeg";
-			}
-		}
-
-		return (new ExecProcess (runpath, runArgs, env, workingPath, processData, processEnded));
 	}
 
 	createOpensslProcess (runArgs, workingPath, processData, processEnded) {

@@ -150,13 +150,6 @@ let configParams = [
 		defaultValue: 1
 	},
 	{
-		name: "FfmpegPath",
-		type: "string",
-		flags: SystemInterface.ParamFlag.Required,
-		description: "The path for the ffmpeg executable. An empty value specifies that the agent's included ffmpeg binary should be used.",
-		defaultValue: ""
-	},
-	{
 		name: "OpensslPath",
 		type: "string",
 		flags: SystemInterface.ParamFlag.Required,
@@ -254,7 +247,6 @@ if (conf != null) {
 	App.AUTHORIZE_SECRET = fields.AuthorizeSecret;
 	App.AUTHORIZE_SESSION_DURATION = fields.AuthorizeSessionDuration * 1000;
 	App.MAX_TASK_COUNT = fields.MaxTaskCount;
-	App.FFMPEG_PATH = fields.FfmpegPath;
 	App.OPENSSL_PATH = fields.OpensslPath;
 	App.MONGOD_PATH = fields.MongodPath;
 	App.STORE_PORT = fields.StorePort;
@@ -272,6 +264,7 @@ function startComplete (err) {
 	}
 
 	Log.info (`${App.AGENT_APPLICATION_NAME} started; version=${App.VERSION} serverAddress=${App.systemAgent.urlHostname}:${App.systemAgent.httpServerPort1} hostname=${App.systemAgent.urlHostname} tcpPort1=${App.systemAgent.httpServerPort1} tcpPort2=${App.systemAgent.httpServerPort2} agentId=${App.systemAgent.agentId}`);
+	Log.notice (`${App.AGENT_APPLICATION_NAME} is supported by donations from users like you. If you get utility and enjoyment from this application, please think about contributing money to support its development. Any amount helps! https:\/\/membranesoftware.com\/contribute\/`);
 }
 
 // Process event handlers

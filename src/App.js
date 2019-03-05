@@ -34,7 +34,7 @@
 
 const Path = require ("path");
 
-exports.VERSION = "11-stable-ad337805";
+exports.VERSION = "12-stable-d3ee5758";
 exports.AGENT_PLATFORM = "";
 
 exports.BASE_DIRECTORY = process.cwd ();
@@ -59,7 +59,6 @@ exports.AUTHORIZE_TOKEN_LENGTH = 64;
 exports.AUTHORIZE_SESSION_DURATION = 60000; // milliseconds
 exports.MAX_TASK_COUNT = 1;
 exports.INTENT_WRITE_PERIOD = 300; // seconds
-exports.FFMPEG_PATH = "";
 exports.OPENSSL_PATH = "";
 exports.MONGOD_PATH = "/usr/bin/mongod";
 exports.STORE_PORT = 27017;
