@@ -37,7 +37,7 @@ const Url = require ("url");
 const Log = require (App.SOURCE_DIRECTORY + "/Log");
 const SystemInterface = require (App.SOURCE_DIRECTORY + "/SystemInterface");
 const FsUtil = require (App.SOURCE_DIRECTORY + "/FsUtil");
-const HlsIndexParser = require (App.SOURCE_DIRECTORY + "/Common/HlsIndexParser");
+const HlsIndexParser = require (App.SOURCE_DIRECTORY + "/HlsIndexParser");
 const TaskBase = require (App.SOURCE_DIRECTORY + "/Task/TaskBase");
 
 class CacheMediaStream extends TaskBase {

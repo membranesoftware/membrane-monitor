@@ -378,10 +378,10 @@ class MonitorServer extends ServerBase {
 		}
 
 		if (App.systemAgent.memoryFilePath != "") {
-			indexpath = Path.join (App.systemAgent.memoryFilePath, App.STREAM_INDEX_FILENAME);
+			indexpath = Path.join (App.systemAgent.memoryFilePath, App.STREAM_HLS_INDEX_FILENAME);
 		}
 		else {
-			indexpath = Path.join (this.cacheDataPath, App.STREAM_INDEX_FILENAME);
+			indexpath = Path.join (this.cacheDataPath, App.STREAM_HLS_INDEX_FILENAME);
 		}
 		firstsegment = 0;
 		pct = 0;

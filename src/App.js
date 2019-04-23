@@ -34,7 +34,7 @@
 
 const Path = require ("path");
 
-exports.VERSION = "12-stable-d3ee5758";
+exports.VERSION = "13-stable-9d9c86b5";
 exports.AGENT_PLATFORM = "";
 
 exports.BASE_DIRECTORY = process.cwd ();
@@ -43,6 +43,7 @@ exports.DATA_DIRECTORY = Path.join (exports.BASE_DIRECTORY, "run");
 exports.BIN_DIRECTORY = Path.join (exports.BASE_DIRECTORY, "bin");
 exports.CONF_DIRECTORY = Path.join (exports.BASE_DIRECTORY, "conf");
 exports.CONFIG_FILE = Path.join (exports.BASE_DIRECTORY, "conf", "systemagent.conf");
+exports.WEBROOT_DIRECTORY = Path.join (exports.BASE_DIRECTORY, "www");
 
 exports.AGENT_DISPLAY_NAME = null;
 exports.AGENT_APPLICATION_NAME = "Membrane Server";
@@ -77,8 +78,10 @@ exports.TLS_CERT_FILENAME = "tls-cert.pem";
 
 exports.STREAM_CACHE_PATH = "stream-cache";
 exports.STREAM_HLS_PATH = "hls";
+exports.STREAM_DASH_PATH = "dash";
 exports.STREAM_THUMBNAIL_PATH = "thumbnail";
-exports.STREAM_INDEX_FILENAME = "index.m3u8";
+exports.STREAM_HLS_INDEX_FILENAME = "index.m3u8";
+exports.STREAM_DASH_DESCRIPTION_FILENAME = "vod.mpd";
 exports.STREAM_RECORD_FILENAME = "record";
 
 global.App = exports;

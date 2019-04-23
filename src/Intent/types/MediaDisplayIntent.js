@@ -40,7 +40,7 @@ const MapUtil = require (App.SOURCE_DIRECTORY + "/MapUtil");
 const Agent = require (App.SOURCE_DIRECTORY + "/Intent/Agent");
 const AgentControl = require (App.SOURCE_DIRECTORY + "/Intent/AgentControl");
 const Task = require (App.SOURCE_DIRECTORY + "/Task/Task");
-const HlsIndexParser = require (App.SOURCE_DIRECTORY + "/Common/HlsIndexParser");
+const HlsIndexParser = require (App.SOURCE_DIRECTORY + "/HlsIndexParser");
 const IntentBase = require (App.SOURCE_DIRECTORY + "/Intent/IntentBase");
 
 const AGENT_TIMEOUT_PERIOD = 60000; // milliseconds
