@@ -20,7 +20,7 @@ CHROMIUM=/usr/bin/chromium-browser
 
 COUNT=0
 while (true); do
-	PROCS=`ps --no-headers -C chromium-browser | grep -v "<defunct>"`
+	PROCS=`ps --no-headers -C chromium-browser-v7,chromium-browser | grep -v "<defunct>"`
 	if [ ! -z "${PROCS}" ]; then
 		# We assume that the chromium-stop.sh script has been executed, so only a
 		# sleep is needed here (to wait for the process to end)
