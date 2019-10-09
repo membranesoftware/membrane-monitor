@@ -1,6 +1,5 @@
 /*
-* Copyright 2019 Membrane Software <author@membranesoftware.com>
-*                 https://membranesoftware.com
+* Copyright 2018-2019 Membrane Software <author@membranesoftware.com> https://membranesoftware.com
 *
 * Redistribution and use in source and binary forms, with or without
 * modification, are permitted provided that the following conditions are met:
@@ -43,8 +42,7 @@ const TaskBase = require (App.SOURCE_DIRECTORY + "/Task/TaskBase");
 class CacheMediaStream extends TaskBase {
 	constructor () {
 		super ();
-		this.name = "Cache stream";
-		this.description = "Transfer data files from a remote stream to local storage";
+		this.name = App.uiText.getText ("cacheMediaStreamTaskName");
 		this.resultObjectType = "StreamItem";
 
 		this.configureParams = [
@@ -118,7 +116,7 @@ class CacheMediaStream extends TaskBase {
 		this.cacheStreamId = "";
 	}
 
-	// Subclass method. Implementations should execute actions appropriate when the task has been successfully configured
+	// Subclass method. Implementations should execute actions appropriate when the task has been successfully configured.
 	doConfigure () {
 		this.cacheStreamId = App.systemAgent.getUuid (SystemInterface.CommandId.StreamItem);
 		this.subtitle = this.configureMap.streamName;

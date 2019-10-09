@@ -1,6 +1,5 @@
 /*
-* Copyright 2019 Membrane Software <author@membranesoftware.com>
-*                 https://membranesoftware.com
+* Copyright 2018-2019 Membrane Software <author@membranesoftware.com> https://membranesoftware.com
 *
 * Redistribution and use in source and binary forms, with or without
 * modification, are permitted provided that the following conditions are met:
@@ -34,7 +33,7 @@
 
 const Path = require ("path");
 
-exports.VERSION = "17-stable-bbb19a95";
+exports.VERSION = "19-stable-43b940af";
 exports.AGENT_PLATFORM = "";
 
 exports.BASE_DIRECTORY = process.cwd ();
@@ -70,6 +69,7 @@ exports.STORE_USERNAME = "";
 exports.STORE_PASSWORD = "";
 exports.STORE_RUN_PERIOD = 60; // seconds
 exports.HEARTBEAT_PERIOD = 500; // milliseconds
+exports.LANGUAGE = "";
 
 exports.OPENSSL_CONFIG_FILENAME = "openssl.cnf";
 exports.TLS_KEY_FILENAME = "tls-key.pem";

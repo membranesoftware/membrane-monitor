@@ -1,6 +1,5 @@
 /*
-* Copyright 2019 Membrane Software <author@membranesoftware.com>
-*                 https://membranesoftware.com
+* Copyright 2018-2019 Membrane Software <author@membranesoftware.com> https://membranesoftware.com
 *
 * Redistribution and use in source and binary forms, with or without
 * modification, are permitted provided that the following conditions are met:
@@ -51,7 +50,6 @@ class MediaDisplayIntent extends IntentBase {
 		super ();
 		this.name = "MediaDisplayIntent";
 		this.displayName = "Play video streams";
-		this.description = "Show video stream content on display agents";
 		this.stateType = "MediaDisplayIntentState";
 	}
 
@@ -196,7 +194,7 @@ class MediaDisplayIntent extends IntentBase {
 
 	// Execute a PlayMedia command for the provided target agent and stream item
 	executePlayMedia (agent, item) {
-		let cmd, params, playcmd, playparams, streamurl;
+		let cmd, params, playcmd, playparams, streamurl, thumbnailcmd;
 
 		streamurl = item.streamUrl;
 		if (item.streamId != "") {
@@ -230,6 +228,15 @@ class MediaDisplayIntent extends IntentBase {
 		if ((this.state.minStartPositionDelta > 0) || (this.state.maxStartPositionDelta > 0)) {
 			params.minStartPositionDelta = this.state.minStartPositionDelta;
 			params.maxStartPositionDelta = this.state.maxStartPositionDelta;
+		}
+		if ((item.streamId != "") && (typeof item.thumbnailUrl == "string") && (typeof item.thumbnailIndex == "number")) {
+			thumbnailcmd = App.systemAgent.createCommand ("GetThumbnailImage", SystemInterface.Constant.Stream, {
+				id: item.streamId,
+				thumbnailIndex: item.thumbnailIndex
+			});
+			if (thumbnailcmd != null) {
+				params.thumbnailUrl = item.thumbnailUrl + "?" + SystemInterface.Constant.UrlQueryParameter + "=" + encodeURIComponent (JSON.stringify (thumbnailcmd));
+			}
 		}
 
 		cmd = App.systemAgent.createCommand ("PlayMedia", SystemInterface.Constant.Monitor, params, App.AUTHORIZE_SECRET, this.authToken);

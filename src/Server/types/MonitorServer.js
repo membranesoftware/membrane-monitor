@@ -1,6 +1,5 @@
 /*
-* Copyright 2019 Membrane Software <author@membranesoftware.com>
-*                 https://membranesoftware.com
+* Copyright 2018-2019 Membrane Software <author@membranesoftware.com> https://membranesoftware.com
 *
 * Redistribution and use in source and binary forms, with or without
 * modification, are permitted provided that the following conditions are met:
@@ -44,14 +43,17 @@ const Intent = require (App.SOURCE_DIRECTORY + "/Intent/Intent");
 const Task = require (App.SOURCE_DIRECTORY + "/Task/Task");
 const ServerBase = require (App.SOURCE_DIRECTORY + "/Server/ServerBase");
 
-const THUMBNAIL_PATH = "/monitor/thumbnail.png";
-const XSET_OFF_PROCESS_NAME = "xset-off.sh";
-const XSET_ACTIVATE_PROCESS_NAME = "xset-activate.sh";
-const OMXPLAYER_PLAY_PROCESS_NAME = "omxplayer-play.sh";
-const OMXPLAYER_STOP_PROCESS_NAME = "omxplayer-stop.sh";
-const CHROMIUM_START_PROCESS_NAME = "chromium-start.sh";
-const CHROMIUM_STOP_PROCESS_NAME = "chromium-stop.sh";
-const CHROMIUM_FIND_PROCESS_NAME = "chromium-find-process.sh";
+const THUMBNAIL_PATH = "/mon/a.jpg";
+const SCREENSHOT_PATH = "/mon/b.jpg";
+const SCREENSHOT_FILENAME = "screenshot.jpg";
+const X_DISPLAY = ":0.0";
+const XSET_PROCESS_NAME = "/usr/bin/xset";
+const PS_PROCESS_NAME = "/bin/ps";
+const KILLALL_PROCESS_NAME = "/usr/bin/killall";
+const CHROMIUM_PROCESS_NAME = "/usr/bin/chromium-browser";
+const OMXPLAYER_PROCESS_NAME = "/usr/bin/omxplayer";
+const SCROT_PROCESS_NAME = "/usr/bin/scrot";
+const RUN_BROWSER_PROCESS_PERIOD = 1000; // milliseconds
 const FIND_BROWSER_PROCESS_PERIOD = 15000; // milliseconds
 const GET_DISK_SPACE_PERIOD = 15 * 60 * 1000; // milliseconds
 const CLEAR_COMPLETE_EVENT = "clearComplete";
@@ -63,15 +65,24 @@ class MonitorServer extends ServerBase {
 		this.description = "Accept and execute commands to control content shown by a display";
 
 		this.configureParams = [
+			{
+				name: "screenshotPeriod",
+				type: "number",
+				flags: SystemInterface.ParamFlag.Required | SystemInterface.ParamFlag.ZeroOrGreater,
+				description: "The interval to use for periodic screenshot capture, in seconds, or zero to disable periodic screenshots",
+				defaultValue: 30
+			}
 		];
 
+		this.lastStatus = null;
 		this.isPlaying = false;
 		this.playProcess = null;
 		this.playMediaName = "";
-		this.isBrowserRunning = false;
-		this.findBrowserProcessTimeout = null;
-		this.isFindingBrowserProcess = false;
+		this.isShowingUrl = false;
+		this.browserProcess = null;
 		this.browserUrl = "";
+		this.findBrowserProcessTask = new RepeatTask ();
+		this.runBrowserProcessTask = new RepeatTask ();
 		this.totalStorage = 0; // bytes
 		this.freeStorage = 0; // bytes
 		this.usedStorage = 0; // bytes
@@ -81,6 +92,9 @@ class MonitorServer extends ServerBase {
 		this.emitter = new EventEmitter ();
 		this.emitter.setMaxListeners (0);
 		this.isClearing = false;
+
+		this.screenshotTask = new RepeatTask ();
+		this.screenshotTime = 0;
 
 		// A map of stream ID values to StreamItem commands
 		this.streamMap = { };
@@ -159,6 +173,24 @@ class MonitorServer extends ServerBase {
 					}
 				}
 			});
+
+			App.systemAgent.addSecondaryRequestHandler (SCREENSHOT_PATH, (cmdInv, request, response) => {
+				let path;
+
+				if (this.screenshotTime <= 0) {
+					App.systemAgent.endRequest (request, response, 404, "Not found");
+					return;
+				}
+
+				path = Path.join (App.DATA_DIRECTORY, SCREENSHOT_FILENAME);
+				App.systemAgent.writeFileResponse (request, response, path, "image/jpeg");
+			});
+
+			if (this.configureMap.screenshotPeriod > 0) {
+				this.screenshotTask.setRepeating ((callback) => {
+					this.captureScreenshot (callback);
+				}, this.configureMap.screenshotPeriod * 1000);
+			}
 
 			this.getDiskSpaceTask.setRepeating ((callback) => {
 				Task.executeTask ("GetDiskSpace", { targetPath: this.cacheDataPath }).then ((resultObject) => {
@@ -276,10 +308,12 @@ class MonitorServer extends ServerBase {
 			totalStorage: this.totalStorage,
 			streamCount: Object.keys (this.streamMap).length,
 			thumbnailPath: THUMBNAIL_PATH,
+			screenshotPath: (this.screenshotTime > 0) ? SCREENSHOT_PATH : "",
+			screenshotTime: this.screenshotTime,
 			isPlaying: this.isPlaying,
 			mediaName: this.isPlaying ? this.playMediaName : "",
-			isShowingUrl: this.isBrowserRunning,
-			showUrl: this.browserUrl
+			isShowingUrl: this.isShowingUrl,
+			showUrl: this.isShowingUrl ? this.browserUrl : ""
 		};
 
 		intents = App.systemAgent.findIntents (this.name, true);
@@ -288,6 +322,29 @@ class MonitorServer extends ServerBase {
 		}
 
 		return (this.createCommand ("MonitorServerStatus", SystemInterface.Constant.Monitor, params));
+	}
+
+	// Return a boolean value indicating if the provided AgentStatus command contains subclass-specific fields indicating a server status change
+	doFindStatusChange (agentStatus) {
+		let fields, result;
+
+		fields = agentStatus.params.monitorServerStatus;
+		if (fields == null) {
+			return (false);
+		}
+
+		result = false;
+		if (this.lastStatus != null) {
+			result = (fields.screenshotTime !== this.lastStatus.screenshotTime) ||
+				(fields.isPlaying !== this.lastStatus.isPlaying) ||
+				(fields.mediaName !== this.lastStatus.mediaName) ||
+				(fields.isShowingUrl !== this.lastStatus.isShowingUrl) ||
+				(fields.showUrl !== this.lastStatus.showUrl) ||
+				(fields.intentName !== this.lastStatus.intentName);
+		}
+		this.lastStatus = fields;
+
+		return (result);
 	}
 
 	// Execute a ClearDisplay command and return a result command
@@ -301,7 +358,7 @@ class MonitorServer extends ServerBase {
 
 	// Execute a PlayMedia command and return a result command
 	playMedia (cmdInv) {
-		let proc, item, playparams, playcmd, playid, clearComplete, activateDesktopBlankComplete, playProcessEnded;
+		let proc, item, playparams, playcmd, playid, clearComplete, activateDesktopBlankComplete, fetchThumbnailComplete;
 
 		if (typeof cmdInv.params.streamId == "string") {
 			playid = "";
@@ -345,19 +402,17 @@ class MonitorServer extends ServerBase {
 			this.activateDesktopBlank (activateDesktopBlankComplete);
 		};
 		activateDesktopBlankComplete = () => {
-			proc = new ExecProcess (OMXPLAYER_PLAY_PROCESS_NAME, [ ], {
-				WORKING_DIR: App.DATA_DIRECTORY,
-				TARGET_MEDIA: cmdInv.params.streamUrl
-			}, "", null, playProcessEnded);
-			this.playProcess = proc;
+			this.runPlayerProcess (cmdInv.params.streamUrl);
+			if ((typeof cmdInv.params.thumbnailUrl == "string") && (cmdInv.params.thumbnailUrl != "")) {
+				App.systemAgent.fetchUrlFile (cmdInv.params.thumbnailUrl, App.DATA_DIRECTORY, SCREENSHOT_FILENAME, fetchThumbnailComplete);
+			}
 		};
-
-		playProcessEnded = () => {
-			if (proc != this.playProcess) {
+		fetchThumbnailComplete = (err, destFilename) => {
+			if (err != null) {
+				Log.debug (`${this.toString ()} failed to load stream thumbnail image; err=${err}`);
 				return;
 			}
-			this.playProcess = null;
-			this.isPlaying = false;
+			this.screenshotTime = new Date ().getTime ();
 		};
 
 		return (this.createCommand ("CommandResult", SystemInterface.Constant.Monitor, {
@@ -367,7 +422,7 @@ class MonitorServer extends ServerBase {
 
 	// Execute a PlayCacheStream command and return a result command
 	playCacheStream (cmdInv) {
-		let item, proc, indexpath, indexdata, firstsegment, pct, delta, writeIndexFileComplete, clearComplete, activateDesktopBlankComplete, playProcessEnded;
+		let item, proc, indexpath, indexdata, firstsegment, pct, delta, writeIndexFileComplete, clearComplete, activateDesktopBlankComplete, copyThumbnailComplete;
 
 		item = this.streamMap[cmdInv.params.streamId];
 		if (item == null) {
@@ -444,19 +499,15 @@ class MonitorServer extends ServerBase {
 			this.activateDesktopBlank (activateDesktopBlankComplete);
 		};
 		activateDesktopBlankComplete = () => {
-			proc = new ExecProcess (OMXPLAYER_PLAY_PROCESS_NAME, [ ], {
-				WORKING_DIR: App.DATA_DIRECTORY,
-				TARGET_MEDIA: indexpath
-			}, "", null, playProcessEnded);
-			this.playProcess = proc;
+			this.runPlayerProcess (indexpath);
+			Fs.copyFile (Path.join (this.cacheDataPath, cmdInv.params.streamId, App.STREAM_THUMBNAIL_PATH, firstsegment + ".jpg"), Path.join (App.DATA_DIRECTORY, SCREENSHOT_FILENAME), copyThumbnailComplete);
 		};
-
-		playProcessEnded = () => {
-			if (proc != this.playProcess) {
+		copyThumbnailComplete = (err) => {
+			if (err != null) {
+				Log.debug (`${this.toString ()} failed to copy stream thumbnail image; err=${err}`);
 				return;
 			}
-			this.playProcess = null;
-			this.isPlaying = false;
+			this.screenshotTime = new Date ().getTime ();
 		};
 
 		return (this.createCommand ("CommandResult", SystemInterface.Constant.Monitor, {
@@ -500,20 +551,22 @@ class MonitorServer extends ServerBase {
 
 	// Stop all running display processes
 	clear (clearCallback) {
-		let stopOmxplayerComplete, stopChromiumComplete, endClear;
+		let stopPlayerComplete, stopBrowserComplete, endClear;
 
 		this.emitter.once (CLEAR_COMPLETE_EVENT, clearCallback);
 		if (this.isClearing) {
 			return;
 		}
 		this.isClearing = true;
-		this.stopOmxplayer (() => {
-			stopOmxplayerComplete ();
+		this.runBrowserProcessTask.stop ();
+		this.findBrowserProcessTask.stop ();
+		this.stopPlayer (() => {
+			stopPlayerComplete ();
 		});
-		stopOmxplayerComplete = () => {
-			this.stopChromium (stopChromiumComplete);
+		stopPlayerComplete = () => {
+			this.stopBrowser (stopBrowserComplete);
 		};
-		stopChromiumComplete = () => {
+		stopBrowserComplete = () => {
 			endClear ();
 		};
 
@@ -523,39 +576,35 @@ class MonitorServer extends ServerBase {
 		};
 	}
 
-	// Stop any active omxplayer process and invoke the provided callback when complete
-	stopOmxplayer (callback) {
-		let proc, playproc;
-
-		playproc = this.playProcess;
-		if (playproc == null) {
-			if (callback != null) {
-				process.nextTick (callback);
-			}
-			return;
-		}
-		this.playProcess = null;
-		this.isPlaying = false;
-
-		proc = new ExecProcess (OMXPLAYER_STOP_PROCESS_NAME, [ ], {
-			SIGNAL_TYPE: "TERM"
-		}, "", null, callback);
-
-		// TODO: Possibly repeat the operation with a KILL signal
+	// Stop any active media player process and invoke the provided callback when complete
+	stopPlayer (callback) {
+		App.systemAgent.runProcess (KILLALL_PROCESS_NAME, [
+			"-q", "omxplayer.bin"
+		]).catch ((err) => {
+			Log.err (`${this.toString ()} error stopping player process; err=${err}`);
+		}).then (() => {
+			this.playProcess = null;
+			this.isPlaying = false;
+			callback ();
+		});
 	}
 
-	// Stop any active chromium process and invoke the provided callback when complete
-	stopChromium (callback) {
-		let proc;
-
-		if (! this.isBrowserRunning) {
+	// Stop any active browser process and invoke the provided callback when complete
+	stopBrowser (callback) {
+		if (! this.isShowingUrl) {
 			if (callback != null) {
 				process.nextTick (callback);
 			}
 			return;
 		}
 
-		proc = new ExecProcess (CHROMIUM_STOP_PROCESS_NAME, [ ], { }, "", null, callback);
+		App.systemAgent.runProcess (KILLALL_PROCESS_NAME, [
+			"-q", "chromium-browse", "chromium-browser-v7", "chromium-browser"
+		]).catch ((err) => {
+			Log.err (`${this.toString ()} error stopping browser process; err=${err}`);
+		}).then (() => {
+			callback ();
+		});
 	}
 
 	// Execute a ShowWebUrl command and return a result command
@@ -572,20 +621,9 @@ class MonitorServer extends ServerBase {
 			this.deactivateDesktopBlank (deactivateDesktopBlankComplete);
 		};
 		deactivateDesktopBlankComplete = () => {
-			let proc;
-
-			proc = new ExecProcess (CHROMIUM_START_PROCESS_NAME, [ ], {
-				TARGET_URL: cmdInv.params.url
-			}, "", null, null);
-
-			this.isBrowserRunning = true;
-			this.browserUrl = cmdInv.params.url;
-			if (this.findBrowserProcessTimeout != null) {
-				clearTimeout (this.findBrowserProcessTimeout);
-			}
-			this.findBrowserProcessTimeout = setTimeout (() => {
-				this.findBrowserProcess ();
-			}, FIND_BROWSER_PROCESS_PERIOD);
+			this.runBrowserProcessTask.setRepeating ((callback) => {
+				this.runBrowserProcess (cmdInv.params.url, callback);
+			}, RUN_BROWSER_PROCESS_PERIOD);
 		};
 
 		return (this.createCommand ("CommandResult", SystemInterface.Constant.Monitor, {
@@ -593,57 +631,121 @@ class MonitorServer extends ServerBase {
 		}));
 	}
 
-	// Execute operations to check if a browser process is running and update the isBrowserRunning data member
-	findBrowserProcess () {
-		let proc, found, procDataCallback, procEndCallback;
+	// Run a browser process if one is not already running, and invoke the provided callback when complete
+	runBrowserProcess (url, callback) {
+		let proc;
 
-		if (this.isFindingBrowserProcess) {
-			return;
-		}
-
-		this.isFindingBrowserProcess = true;
-		found = false;
-
-		procDataCallback = (lines, parseCallback) => {
-			// The chromium-find-process.sh script prints "true" if the process was found
-			for (let i = 0; i < lines.length; i++) {
-				if (lines[i] == "true") {
-					found = true;
-				}
+		Log.debug (`${this.toString ()} run browser; url=${url}`);
+		this.findBrowserProcess (() => {
+			if (this.isShowingUrl) {
+				callback ();
+				return;
 			}
 
+			this.isShowingUrl = true;
+			this.browserUrl = url;
+			proc = new ExecProcess (CHROMIUM_PROCESS_NAME, [
+				"--kiosk",
+				"--user-data-dir=/tmp",
+				url
+			], {
+				"DISPLAY": X_DISPLAY
+			}, "", (lines, parseCallback) => {
+				for (let line of lines) {
+					Log.debug3 (`${this.toString ()} browser output: ${line}`);
+				}
+				process.nextTick (parseCallback);
+			}, (err, isExitSuccess) => {
+				Log.debug3 (`${this.toString ()} browser end; err=${err} isExitSuccess=${isExitSuccess}`);
+				if (proc == this.browserProcess) {
+					this.browserProcess = null;
+					this.isShowingUrl = false;
+				}
+				this.findBrowserProcessTask.setNextRepeat (0);
+			});
+			this.browserProcess = proc;
+
+			this.runBrowserProcessTask.stop ();
+			this.findBrowserProcessTask.setRepeating ((callback) => {
+				this.findBrowserProcess (callback);
+			}, FIND_BROWSER_PROCESS_PERIOD);
+			callback ();
+		});
+	}
+
+	// Check if a browser process is running, update the isShowingUrl data member, and invoke the provided callback when complete
+	findBrowserProcess (callback) {
+		let found, procDataCallback;
+
+		found = false;
+		procDataCallback = (lines, parseCallback) => {
+			if (! found) {
+				for (let line of lines) {
+					if (line.indexOf ("<defunct>") < 0) {
+						found = true;
+						break;
+					}
+				}
+			}
 			process.nextTick (parseCallback);
 		};
 
-		procEndCallback = () => {
-			this.isFindingBrowserProcess = false;
-			this.isBrowserRunning = found;
-
+		App.systemAgent.runProcess (PS_PROCESS_NAME, [
+			"--no-headers",
+			"-C", "chromium-browse,chromium-browser-v7,chromium-browser"
+		], { }, "", procDataCallback).then ((isExitSuccess) => {
+			this.isShowingUrl = found;
 			if (! found) {
 				this.browserUrl = "";
+				this.findBrowserProcessTask.stop ();
 			}
-			else {
-				this.findBrowserProcessTimeout = setTimeout (() => {
-					this.findBrowserProcess ();
-				}, FIND_BROWSER_PROCESS_PERIOD);
-			}
-		};
+		}).catch ((err) => {
+			Log.err (`${this.toString ()} error finding browser process; err=${err}`);
+		}).then (() => {
+			callback ();
+		});
+	}
 
-		proc = new ExecProcess (CHROMIUM_FIND_PROCESS_NAME, [ ], { }, "", procDataCallback, procEndCallback);
+	// Run a media player process
+	runPlayerProcess (targetMedia) {
+		let proc;
+
+		Log.debug (`${this.toString ()} run media player; targetMedia=${targetMedia}`);
+		proc = new ExecProcess (OMXPLAYER_PROCESS_NAME, [ targetMedia ], { }, "", (lines, parseCallback) => {
+			for (let line of lines) {
+				Log.debug3 (`${this.toString ()} player output: ${line}`);
+			}
+			process.nextTick (parseCallback);
+		}, (err, isExitSuccess) => {
+			Log.debug3 (`${this.toString ()} player end; err=${err} isExitSuccess=${isExitSuccess}`);
+			if (proc == this.playProcess) {
+				this.playProcess = null;
+				this.isPlaying = false;
+			}
+		});
+		this.playProcess = proc;
 	}
 
 	// Deactivate and disable desktop screen blank functionality and invoke the provided callback when complete
 	deactivateDesktopBlank (endCallback) {
-		let proc;
-
-		proc = new ExecProcess (XSET_OFF_PROCESS_NAME, [ ], { }, "", null, endCallback);
+		App.systemAgent.runProcess (XSET_PROCESS_NAME, [ "s", "off" ], { "DISPLAY": X_DISPLAY }).then ((isExitSuccess) => {
+			return (App.systemAgent.runProcess (XSET_PROCESS_NAME, [ "-dpms" ], { "DISPLAY": X_DISPLAY }));
+		}).then ((isExitSuccess) => {
+			return (App.systemAgent.runProcess (XSET_PROCESS_NAME, [ "s", "noblank" ], { "DISPLAY": X_DISPLAY }));
+		}).catch ((err) => {
+			Log.err (`${this.toString ()} error deactivating desktop blank; err=${err}`);
+		}).then (() => {
+			endCallback ();
+		});
 	}
 
 	// Activate the desktop screen blank and invoke the provided callback when complete
 	activateDesktopBlank (endCallback) {
-		let proc;
-
-		proc = new ExecProcess (XSET_ACTIVATE_PROCESS_NAME, [ ], { }, "", null, endCallback);
+		App.systemAgent.runProcess (XSET_PROCESS_NAME, [ "s", "activate" ], { "DISPLAY": X_DISPLAY }).catch ((err) => {
+			Log.err (`${this.toString ()} error activating desktop blank; err=${err}`);
+		}).then (() => {
+			endCallback ();
+		});
 	}
 
 	// Start an intent to show web content on display agents and return a CommandResult command
@@ -791,64 +893,41 @@ class MonitorServer extends ServerBase {
 
 		item = this.streamMap[cmdInv.params.id];
 		if (item == null) {
-			response.statusCode = 404;
-			response.end ();
+			App.systemAgent.endRequest (request, response, 404, "Not found");
 			return;
 		}
 
 		if (cmdInv.params.thumbnailIndex >= item.params.segmentCount) {
-			response.statusCode = 404;
-			response.end ();
+			App.systemAgent.endRequest (request, response, 404, "Not found");
 			return;
 		}
 
 		path = Path.join (this.cacheDataPath, cmdInv.params.id, App.STREAM_THUMBNAIL_PATH, cmdInv.params.thumbnailIndex + ".jpg");
-		Fs.stat (path, (err, stats) => {
-			let stream, isopen;
+		App.systemAgent.writeFileResponse (request, response, path, "image/jpeg");
+	}
 
-			if (err != null) {
-				Log.err (`${this.toString ()} error reading thumbnail file; path=${path} err=${err}`);
-				response.statusCode = 404;
-				response.end ();
-				return;
-			}
+	// Update the monitor's screenshot image to reflect display state and invoke the provided callback when complete
+	captureScreenshot (endCallback) {
+		let now, targetpath;
+		if (this.isPlaying) {
+			process.nextTick (endCallback);
+			return;
+		}
 
-			if (! stats.isFile ()) {
-				Log.err (`${this.toString ()} error reading thumbnail file; path=${path} err=Not a regular file`);
-				response.statusCode = 404;
-				response.end ();
-				return;
-			}
-
-			isopen = false;
-			stream = Fs.createReadStream (path, { });
-			stream.on ("error", (err) => {
-				Log.err (`${this.toString ()} error reading thumbnail file; path=${path} err=${err}`);
-				if (! isopen) {
-					response.statusCode = 500;
-					response.end ();
-				}
-			});
-
-			stream.on ("open", () => {
-				if (isopen) {
-					return;
-				}
-
-				isopen = true;
-				response.statusCode = 200;
-				response.setHeader ("Content-Type", "image/jpeg");
-				response.setHeader ("Content-Length", stats.size);
-				stream.pipe (response);
-				stream.on ("finish", () => {
-					response.end ();
-				});
-
-				response.socket.setMaxListeners (0);
-				response.socket.once ("error", (err) => {
-					stream.close ();
-				});
-			});
+		now = new Date ().getTime ();
+		targetpath = Path.join (App.DATA_DIRECTORY, `screenshot_${now}.jpg`);
+		App.systemAgent.runProcess (SCROT_PROCESS_NAME,
+			[ targetpath, "-z", "-q", "90" ],
+			{ "DISPLAY": X_DISPLAY }
+		).then (() => {
+			return (FsUtil.renameFile (targetpath, Path.join (App.DATA_DIRECTORY, SCREENSHOT_FILENAME)));
+		}).then (() => {
+			this.screenshotTime = now;
+		}).catch ((err) => {
+			Log.err (`Failed to capture display screenshot; err=${err}`);
+			Fs.unlink (targetpath, () => { });
+		}).then (() => {
+			endCallback ();
 		});
 	}
 }
