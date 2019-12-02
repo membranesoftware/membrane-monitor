@@ -35,7 +35,6 @@ const Fs = require ("fs");
 const Result = require (App.SOURCE_DIRECTORY + "/Result");
 const Log = require (App.SOURCE_DIRECTORY + "/Log");
 const SystemInterface = require (App.SOURCE_DIRECTORY + "/SystemInterface");
-const MapUtil = require (App.SOURCE_DIRECTORY + "/MapUtil");
 const Agent = require (App.SOURCE_DIRECTORY + "/Intent/Agent");
 const AgentControl = require (App.SOURCE_DIRECTORY + "/Intent/AgentControl");
 const Task = require (App.SOURCE_DIRECTORY + "/Task/Task");

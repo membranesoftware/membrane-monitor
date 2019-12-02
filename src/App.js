@@ -33,7 +33,7 @@
 
 const Path = require ("path");
 
-exports.VERSION = "19-stable-43b940af";
+exports.VERSION = "20-stable-89e3e68b";
 exports.AGENT_PLATFORM = "";
 
 exports.BASE_DIRECTORY = process.cwd ();
@@ -60,6 +60,7 @@ exports.AUTHORIZE_SESSION_DURATION = 60000; // milliseconds
 exports.MAX_TASK_COUNT = 1;
 exports.INTENT_WRITE_PERIOD = 300; // seconds
 exports.OPENSSL_PATH = "";
+exports.APPLICATION_NEWS_URL = "https://membranesoftware.com/application-news/";
 exports.MONGOD_PATH = "/usr/bin/mongod";
 exports.STORE_PORT = 27017;
 exports.STORE_DATABASE = "membrane";

@@ -203,6 +203,7 @@ class MonitorServer extends ServerBase {
 				});
 			}, GET_DISK_SPACE_PERIOD);
 
+			App.systemAgent.getApplicationNews ();
 			this.deactivateDesktopBlank (() => {
 				startCallback ();
 			});
