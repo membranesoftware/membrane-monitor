@@ -53,6 +53,8 @@ const KILLALL_PROCESS_NAME = "/usr/bin/killall";
 const CHROMIUM_PROCESS_NAME = "/usr/bin/chromium-browser";
 const OMXPLAYER_PROCESS_NAME = "/usr/bin/omxplayer";
 const SCROT_PROCESS_NAME = "/usr/bin/scrot";
+const XDPYINFO_PROCESS_NAME = "/usr/bin/xdpyinfo";
+const XDOTOOL_PROCESS_NAME = "/usr/bin/xdotool";
 const RUN_BROWSER_PROCESS_PERIOD = 1000; // milliseconds
 const FIND_BROWSER_PROCESS_PERIOD = 15000; // milliseconds
 const GET_DISK_SPACE_PERIOD = 15 * 60 * 1000; // milliseconds
@@ -75,9 +77,12 @@ class MonitorServer extends ServerBase {
 		];
 
 		this.lastStatus = null;
+		this.displayWidth = 0;
+		this.displayHeight = 0;
 		this.isPlaying = false;
 		this.playProcess = null;
 		this.playMediaName = "";
+		this.isPlayPaused = false;
 		this.isShowingUrl = false;
 		this.browserProcess = null;
 		this.browserUrl = "";
@@ -107,6 +112,7 @@ class MonitorServer extends ServerBase {
 	doStart (startCallback) {
 		let deactivateDesktopBlankComplete;
 
+		this.isPlayPaused = false;
 		FsUtil.createDirectory (this.cacheDataPath).then (() => {
 			return (Task.executeTask ("GetDiskSpace", { targetPath: this.cacheDataPath }));
 		}).then ((resultObject) => {
@@ -114,6 +120,8 @@ class MonitorServer extends ServerBase {
 			this.usedStorage = resultObject.used;
 			this.freeStorage = resultObject.free;
 
+			return (this.getDisplayInfo ());
+		}).then (() => {
 			return (this.readStreamCache ());
 		}).then (() => {
 			App.systemAgent.addInvokeRequestHandler ("/", SystemInterface.Constant.Monitor, (cmdInv) => {
@@ -126,6 +134,9 @@ class MonitorServer extends ServerBase {
 					}
 					case SystemInterface.CommandId.PlayMedia: {
 						return (this.playMedia (cmdInv));
+					}
+					case SystemInterface.CommandId.PauseMedia: {
+						return (this.pauseMedia (cmdInv));
 					}
 					case SystemInterface.CommandId.PlayCacheStream: {
 						return (this.playCacheStream (cmdInv));
@@ -210,6 +221,27 @@ class MonitorServer extends ServerBase {
 		}).catch ((err) => {
 			startCallback (err);
 		});
+	}
+
+	// Return a promise that reads and stores display info values
+	getDisplayInfo () {
+		return (new Promise ((resolve, reject) => {
+			App.systemAgent.runProcess (XDPYINFO_PROCESS_NAME, [ ], { "DISPLAY": X_DISPLAY }, "", (lines, parseCallback) => {
+				let m;
+
+				for (let line of lines) {
+					m = line.match (/dimensions:.*?([0-9]+)x([0-9]+)[^0-9]/);
+					if (m != null) {
+						this.displayWidth = parseInt (m[1]);
+						this.displayHeight = parseInt (m[2]);
+						Log.debug (`${this.toString ()} read display info; displayWidth=${this.displayWidth} displayHeight=${this.displayHeight}`);
+					}
+				}
+				process.nextTick (parseCallback);
+			}).then ((isExitSuccess) => {
+				resolve ();
+			});
+		}));
 	}
 
 	// Return a promise that reads stream records from the cache
@@ -312,6 +344,7 @@ class MonitorServer extends ServerBase {
 			screenshotPath: (this.screenshotTime > 0) ? SCREENSHOT_PATH : "",
 			screenshotTime: this.screenshotTime,
 			isPlaying: this.isPlaying,
+			isPlayPaused: this.isPlayPaused,
 			mediaName: this.isPlaying ? this.playMediaName : "",
 			isShowingUrl: this.isShowingUrl,
 			showUrl: this.isShowingUrl ? this.browserUrl : ""
@@ -338,6 +371,7 @@ class MonitorServer extends ServerBase {
 		if (this.lastStatus != null) {
 			result = (fields.screenshotTime !== this.lastStatus.screenshotTime) ||
 				(fields.isPlaying !== this.lastStatus.isPlaying) ||
+				(fields.isPlayPaused !== this.lastStatus.isPlayPaused) ||
 				(fields.mediaName !== this.lastStatus.mediaName) ||
 				(fields.isShowingUrl !== this.lastStatus.isShowingUrl) ||
 				(fields.showUrl !== this.lastStatus.showUrl) ||
@@ -415,6 +449,27 @@ class MonitorServer extends ServerBase {
 			}
 			this.screenshotTime = new Date ().getTime ();
 		};
+
+		return (this.createCommand ("CommandResult", SystemInterface.Constant.Monitor, {
+			success: true
+		}));
+	}
+
+	// Execute a PauseMedia command and return a result command
+	pauseMedia (cmdInv) {
+		let intents;
+
+		this.isPlayPaused = (! this.isPlayPaused);
+		if (this.playProcess != null) {
+			this.playProcess.write ("p");
+		}
+
+		intents = App.systemAgent.findIntents (this.name, true);
+		for (let intent of intents) {
+			if (intent.name == "MediaDisplayIntent") {
+				intent.setPaused (this.isPlayPaused);
+			}
+		}
 
 		return (this.createCommand ("CommandResult", SystemInterface.Constant.Monitor, {
 			success: true
@@ -666,6 +721,13 @@ class MonitorServer extends ServerBase {
 			});
 			this.browserProcess = proc;
 
+			if ((this.displayWidth > 0) && (this.displayHeight > 0)) {
+				App.systemAgent.runProcess (XDOTOOL_PROCESS_NAME, [ "mousemove", this.displayWidth, 0 ], { "DISPLAY": X_DISPLAY }).then ((isExitSuccess) => {
+				}).catch ((err) => {
+					Log.err (`${this.toString ()} failed to run xdotool; err=${err}`);
+				});
+			}
+
 			this.runBrowserProcessTask.stop ();
 			this.findBrowserProcessTask.setRepeating ((callback) => {
 				this.findBrowserProcess (callback);
@@ -709,10 +771,10 @@ class MonitorServer extends ServerBase {
 
 	// Run a media player process
 	runPlayerProcess (targetMedia) {
-		let proc;
+		let proc, intents;
 
 		Log.debug (`${this.toString ()} run media player; targetMedia=${targetMedia}`);
-		proc = new ExecProcess (OMXPLAYER_PROCESS_NAME, [ targetMedia ], { }, "", (lines, parseCallback) => {
+		proc = new ExecProcess (OMXPLAYER_PROCESS_NAME, [ "--no-osd", targetMedia ], { }, "", (lines, parseCallback) => {
 			for (let line of lines) {
 				Log.debug3 (`${this.toString ()} player output: ${line}`);
 			}
@@ -725,6 +787,13 @@ class MonitorServer extends ServerBase {
 			}
 		});
 		this.playProcess = proc;
+		this.isPlayPaused = false;
+		intents = App.systemAgent.findIntents (this.name, true);
+		for (let intent of intents) {
+			if (intent.name == "MediaDisplayIntent") {
+				intent.setPaused (false);
+			}
+		}
 	}
 
 	// Deactivate and disable desktop screen blank functionality and invoke the provided callback when complete
@@ -763,8 +832,10 @@ class MonitorServer extends ServerBase {
 		}
 		else {
 			App.systemAgent.removeIntentGroup (this.name);
-			App.systemAgent.runIntent (intent, this.name);
 			params.success = true;
+			this.clear (() => {
+				App.systemAgent.runIntent (intent, this.name);
+			});
 		}
 
 		return (this.createCommand ("CommandResult", SystemInterface.Constant.Monitor, params));
@@ -784,10 +855,11 @@ class MonitorServer extends ServerBase {
 		}
 		else {
 			App.systemAgent.removeIntentGroup (this.name);
-			App.systemAgent.runIntent (intent, this.name);
 			params.success = true;
+			this.clear (() => {
+				App.systemAgent.runIntent (intent, this.name);
+			});
 		}
-
 		return (this.createCommand ("CommandResult", SystemInterface.Constant.Monitor, params));
 	}
 

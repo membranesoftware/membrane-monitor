@@ -57,12 +57,12 @@ class WebDisplayIntent extends IntentBase {
 			this.state.isShuffle = configParams.isShuffle;
 		}
 		if (typeof configParams.minItemDisplayDuration == "number") {
-			if (configParams.minItemDisplayDuration >= 0) {
+			if (configParams.minItemDisplayDuration > 0) {
 				this.state.minItemDisplayDuration = configParams.minItemDisplayDuration;
 			}
 		}
 		if (typeof configParams.maxItemDisplayDuration == "number") {
-			if (configParams.maxItemDisplayDuration >= 0) {
+			if (configParams.maxItemDisplayDuration > 0) {
 				this.state.maxItemDisplayDuration = configParams.maxItemDisplayDuration;
 			}
 		}

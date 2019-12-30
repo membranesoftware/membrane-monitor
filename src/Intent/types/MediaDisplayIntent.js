@@ -50,10 +50,16 @@ class MediaDisplayIntent extends IntentBase {
 		this.name = "MediaDisplayIntent";
 		this.displayName = "Play video streams";
 		this.stateType = "MediaDisplayIntentState";
+
+		// Read-only data members
+		this.isPaused = false;
+
+		this.pauseAgentMap = { };
 	}
 
 	// Perform actions appropriate when the intent becomes active
 	doStart () {
+		this.isPaused = false;
 		this.lastCommandTimeMap = { };
 		if (App.AUTHORIZE_SECRET == "") {
 			this.authToken = "";
@@ -100,6 +106,31 @@ class MediaDisplayIntent extends IntentBase {
 		return (Result.SUCCESS);
 	}
 
+	// Set the intent's paused state
+	setPaused (paused) {
+		let now;
+
+		if (this.isPaused == paused) {
+			return;
+		}
+		now = new Date ().getTime ();
+		this.isPaused = paused;
+		if (this.isPaused) {
+			this.pauseAgentMap = this.state.agentMap;
+			this.state.agentMap = { };
+			for (let key in this.pauseAgentMap) {
+				this.pauseAgentMap[key] -= now;
+			}
+		}
+		else {
+			this.state.agentMap = { };
+			for (let key in this.pauseAgentMap) {
+				this.state.agentMap[key] = this.pauseAgentMap[key] + now;
+			}
+			this.pauseAgentMap = { };
+		}
+	}
+
 	// Perform actions appropriate for the current state of the application
 	doUpdate () {
 		let agents;
@@ -130,6 +161,10 @@ class MediaDisplayIntent extends IntentBase {
 			this.state.maxStartPositionDelta = 0;
 		}
 
+		if (this.isPaused) {
+			return;
+		}
+
 		agents = this.findAgents ((a) => {
 			let t;
 
@@ -146,6 +181,10 @@ class MediaDisplayIntent extends IntentBase {
 				if (! a.lastStatus.monitorServerStatus.isPlaying) {
 					return (true);
 				}
+			}
+
+			if ((this.state.minItemDisplayDuration <= 0) || (this.state.maxItemDisplayDuration <= 0)) {
+				return (false);
 			}
 
 			t = this.state.agentMap[a.agentId];
@@ -242,9 +281,10 @@ class MediaDisplayIntent extends IntentBase {
 		if (cmd == null) {
 			return;
 		}
-
 		this.lastCommandTimeMap[agent.agentId] = this.updateTime;
-		this.state.agentMap[agent.agentId] = this.updateTime + App.systemAgent.getRandomInteger (this.state.minItemDisplayDuration * 1000, this.state.maxItemDisplayDuration * 1000);
+		if ((this.state.minItemDisplayDuration > 0) && (this.state.maxItemDisplayDuration > 0)) {
+			this.state.agentMap[agent.agentId] = this.updateTime + App.systemAgent.getRandomInteger (this.state.minItemDisplayDuration * 1000, this.state.maxItemDisplayDuration * 1000);
+		}
 		App.systemAgent.invokeAgentCommand (agent.urlHostname, agent.tcpPort1, SystemInterface.Constant.DefaultInvokePath, cmd, SystemInterface.CommandId.CommandResult, (err) => {
 			if (err != null) {
 				Log.debug (`${this.toString ()} failed to send PlayMedia command; err=${err}`);
@@ -271,9 +311,10 @@ class MediaDisplayIntent extends IntentBase {
 		if (cmd == null) {
 			return;
 		}
-
 		this.lastCommandTimeMap[agent.agentId] = this.updateTime;
-		this.state.agentMap[agent.agentId] = this.updateTime + App.systemAgent.getRandomInteger (this.state.minItemDisplayDuration * 1000, this.state.maxItemDisplayDuration * 1000);
+		if ((this.state.minItemDisplayDuration > 0) && (this.state.maxItemDisplayDuration > 0)) {
+			this.state.agentMap[agent.agentId] = this.updateTime + App.systemAgent.getRandomInteger (this.state.minItemDisplayDuration * 1000, this.state.maxItemDisplayDuration * 1000);
+		}
 		App.systemAgent.invokeAgentCommand (agent.urlHostname, agent.tcpPort1, SystemInterface.Constant.DefaultInvokePath, cmd, SystemInterface.CommandId.CommandResult, (err) => {
 			if (err != null) {
 				Log.debug (`${this.toString ()} failed to send PlayCacheStream command; err=${err}`);

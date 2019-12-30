@@ -129,7 +129,6 @@ class CacheMediaStream extends TaskBase {
 	// Subclass method. Implementations should execute task actions and call end when complete.
 	doRun () {
 		// TODO: Check isCancelled at each step
-		// TODO: Increment percentComplete as the task runs
 
 		FsUtil.createDirectory (this.configureMap.dataPath).then (() => {
 			return (FsUtil.createDirectory (this.streamDataPath));
@@ -156,6 +155,7 @@ class CacheMediaStream extends TaskBase {
 
 			return (App.systemAgent.fetchUrlData (this.manifestUrl));
 		}).then ((urlData) => {
+			this.setPercentComplete (1);
 			return (this.fetchSegmentFiles (urlData));
 		}).then (() => {
 			this.setPercentComplete (100);
@@ -173,11 +173,12 @@ class CacheMediaStream extends TaskBase {
 			let hls, recordparams, segmenturls, segmentindex, fetchNextSegment, fetchSegmentComplete, statSegmentComplete, fetchThumbnailComplete, statThumbnailComplete, writeRecordFile, writeRecordFileComplete;
 
 			hls = HlsIndexParser.parse (hlsIndexData);
-			if (hls == null) {
+			if ((hls == null) || (hls.segmentCount <= 0)) {
 				reject (Error ("Failed to parse stream index data"));
 				return;
 			}
 
+			this.progressPercentDelta = (99 / hls.segmentCount);
 			recordparams = {
 				id: this.cacheStreamId,
 				name: this.configureMap.streamName,
@@ -268,6 +269,7 @@ class CacheMediaStream extends TaskBase {
 					recordparams.size += stats.size;
 				}
 
+				this.addPercentComplete (this.progressPercentDelta);
 				fetchNextSegment ();
 			};
 

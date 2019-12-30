@@ -191,6 +191,24 @@ class ExecProcess {
 		this.isPaused = false;
 	}
 
+	// Write the provided data to the process's stdin
+	write (data) {
+		let proc;
+
+		proc = this.process;
+		if (proc == null) {
+			return;
+		}
+
+		if (! proc.stdin.write (data)) {
+			Log.debug (`ExecProcess stdin buffer full; pid=${proc.pid} execPath=${this.execPath}`);
+			proc.stdin.once ("drain", () => {
+				Log.debug (`ExecProcess stdin buffer drained; pid=${proc.pid} execPath=${this.execPath}`);
+				proc.stdin.write (data);
+			});
+		}
+	}
+
 	// Parse any data contained in process buffers
 	parseBuffer () {
 		let pos, line, lines, endParse;
