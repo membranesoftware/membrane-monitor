@@ -1,5 +1,5 @@
 /*
-* Copyright 2018-2019 Membrane Software <author@membranesoftware.com> https://membranesoftware.com
+* Copyright 2018-2020 Membrane Software <author@membranesoftware.com> https://membranesoftware.com
 *
 * Redistribution and use in source and binary forms, with or without
 * modification, are permitted provided that the following conditions are met:
@@ -60,7 +60,6 @@ const ExecProcess = require (App.SOURCE_DIRECTORY + "/ExecProcess");
 const Server = require (App.SOURCE_DIRECTORY + "/Server/Server");
 
 const START_EVENT = "start";
-const STOP_EVENT = "stop";
 const AGENT_STATUS_EVENT = "AgentStatus";
 const WEBROOT_INDEX_FILENAME = "index.html";
 
@@ -80,9 +79,15 @@ class SystemAgent {
 		this.isStarted = false;
 		this.startTime = 0;
 		this.httpServer1 = null;
+		this.io = null;
 		this.httpServerPort1 = 0;
 		this.httpServer2 = null;
 		this.httpServerPort2 = 0;
+
+		this.isBroadcastReady = false;
+		this.datagramSocket = null;
+		this.datagramSocketPort = 0;
+
 		this.linkPath = App.LINK_PATH;
 		if (this.linkPath == "") {
 			this.linkPath = this.getRandomString (32);
@@ -91,13 +96,14 @@ class SystemAgent {
 			this.linkPath = "/" + this.linkPath;
 		}
 
-		this.isBroadcastReady = false;
-		this.datagramSocket = null;
-		this.datagramSocketPort = 0;
-		this.updateDatagramSocketTask = new RepeatTask ();
+		this.updateNetworkTask = new RepeatTask ();
+		this.shouldResetNetworkServers = false;
 
-		// A map of interface names to broadcast addresses for use by the datagram socket
-		this.datagramBroadcastAddressMap = { };
+		// A map of interface names to network addresses
+		this.networkAddressMap = { };
+
+		// A map of interface names to broadcast addresses
+		this.broadcastAddressMap = { };
 
 		// A map of paths to functions for handling requests received by the main HTTP server
 		this.mainRequestHandlerMap = { };
@@ -151,9 +157,6 @@ class SystemAgent {
 		this.runDataStoreTask = new RepeatTask ();
 		this.runDataStoreEventEmitter = new EventEmitter ();
 		this.runDataStoreEventEmitter.setMaxListeners (0);
-
-		this.agentStopEventEmitter = new EventEmitter ();
-		this.agentStopEventEmitter.setMaxListeners (0);
 
 		this.agentStatusTask = new RepeatTask ();
 		this.agentStatusEventEmitter = new EventEmitter ();
@@ -244,8 +247,6 @@ class SystemAgent {
 				return (this.startAllServers ());
 			}
 		}).then (() => {
-			return (this.startMainHttpServer ());
-		}).then (() => {
 			let digest, len;
 
 			if ((typeof this.runState.adminSecret == "string") && (this.runState.adminSecret != "")) {
@@ -267,9 +268,6 @@ class SystemAgent {
 			this.accessControl.start ();
 			this.taskGroup.start ();
 			this.intentGroup.start ();
-			if ((Object.keys (this.secondaryRequestHandlerMap).length > 0) || (Object.keys (this.secondaryWebrootMap).length > 0)) {
-				return (this.startSecondaryHttpServer ());
-			}
 		}).then (() => {
 			if (this.dataStoreRunCount > 0) {
 				this.dataStore = new DataStore (App.MONGOD_PATH, this.dataPath + "/records", App.STORE_PORT);
@@ -439,8 +437,8 @@ class SystemAgent {
 				}
 			});
 
-			this.updateDatagramSocketTask.setRepeating ((callback) => {
-				this.updateDatagramSocket (callback);
+			this.updateNetworkTask.setRepeating ((callback) => {
+				this.updateNetwork (callback);
 			}, App.HEARTBEAT_PERIOD * 8, App.HEARTBEAT_PERIOD * 16);
 
 			if (this.dataStoreRunCount > 0) {
@@ -556,7 +554,7 @@ class SystemAgent {
 	// Return a promise that starts the main HTTP server if it isn't already running
 	startMainHttpServer () {
 		return (new Promise ((resolve, reject) => {
-			let http, options, io, listenError, listenComplete, ioConnection;
+			let http, options, listenError, listenComplete, runError, ioConnection;
 
 			if (this.httpServer1 != null) {
 				resolve ();
@@ -599,8 +597,12 @@ class SystemAgent {
 				reject (Error (err));
 			};
 
+			runError = (err) => {
+				Log.err (`HTTP-1 error; err=${err}`);
+			};
+
 			listenComplete = () => {
-				let address;
+				let address, io;
 
 				http.removeListener ("error", listenError);
 				address = http.address ();
@@ -612,20 +614,17 @@ class SystemAgent {
 				this.httpServerPort1 = address.port;
 				this.resetUrlHostname ();
 				Log.debug (`HTTP-1 listening; address=${this.urlHostname}:${this.httpServerPort1}`);
-				http.on ("error", (err) => {
-					Log.err (`HTTP-1 error; err=${err}`);
-				});
-
-				http.on ("close", () => {
-					if (this.httpServer1 == http) {
-						this.httpServer1 = null;
-					}
-				});
 
 				io = Io.listen (http, { "path": this.linkPath });
 				io.on ("connection", ioConnection);
-				this.agentStopEventEmitter.once (STOP_EVENT, () => {
-					io.close ();
+				this.io = io;
+
+				http.on ("error", runError);
+				http.once ("close", () => {
+					http.removeListener ("error", runError);
+					if (this.httpServer1 == http) {
+						this.httpServer1 = null;
+					}
 				});
 
 				resolve ();
@@ -696,10 +695,42 @@ class SystemAgent {
 		}));
 	}
 
+	// Return a promise that closes the main HTTP server
+	closeMainHttpServer () {
+		return (new Promise ((resolve, reject) => {
+			let http;
+
+			http = this.httpServer1;
+			if (http == null) {
+				resolve ();
+				return;
+			}
+
+			http.close ((err) => {
+				if (err) {
+					Log.debug (`HTTP-1 close error; err=${err}`);
+				}
+				if (http == this.httpServer1) {
+					this.httpServer1 = null;
+				}
+				resolve ();
+			});
+			if (this.io != null) {
+				try {
+					this.io.close ();
+				}
+				catch (err) {
+					Log.debug (`IO close error; err=${err}`);
+				}
+				this.io = null;
+			}
+		}));
+	}
+
 	// Return a promise that starts the secondary HTTP server if it isn't already running
 	startSecondaryHttpServer () {
 		return (new Promise ((resolve, reject) => {
-			let http, listenError, listenComplete;
+			let http, listenError, listenComplete, runError;
 
 			if (this.httpServer2 != null) {
 				resolve ();
@@ -720,6 +751,10 @@ class SystemAgent {
 				reject (Error (err));
 			};
 
+			runError = (err) => {
+				Log.err (`HTTP-2 error; err=${err}`);
+			};
+
 			listenComplete = () => {
 				let address;
 
@@ -732,11 +767,9 @@ class SystemAgent {
 
 				this.httpServerPort2 = address.port;
 				Log.debug (`HTTP-2 listening; address=${this.urlHostname}:${this.httpServerPort2}`);
-				http.on ("error", (err) => {
-					Log.err (`HTTP-2 error; err=${err}`);
-				});
-
-				http.on ("close", () => {
+				http.on ("error", runError);
+				http.once ("close", () => {
+					http.removeListener ("error", runError);
 					if (this.httpServer2 == http) {
 						this.httpServer2 = null;
 					}
@@ -747,7 +780,121 @@ class SystemAgent {
 		}));
 	}
 
-	// Start all servers and invoke startCompleteCallback (err) when complete. If startCompleteCallback is not provided, instead return a promise that resolves if the operation succeeds or rejects if it doesn't.
+	// Return a promise that closes the secondary HTTP server
+	closeSecondaryHttpServer () {
+		return (new Promise ((resolve, reject) => {
+			let http;
+
+			http = this.httpServer2;
+			if (http == null) {
+				resolve ();
+				return;
+			}
+
+			http.close ((err) => {
+				if (err) {
+					Log.debug (`HTTP-2 close error; err=${err}`);
+				}
+				if (http == this.httpServer2) {
+					this.httpServer2 = null;
+				}
+				resolve ();
+			});
+		}));
+	}
+
+	// Return a promise that starts the datagram socket if it isn't already running
+	startDatagramSocket () {
+		return (new Promise ((resolve, reject) => {
+			let socket, listenError, runError;
+
+			if (this.datagramSocket != null) {
+				resolve ();
+				return;
+			}
+
+			this.isBroadcastReady = false;
+			socket = Dgram.createSocket ("udp4");
+
+			listenError = (err) => {
+				socket.removeListener ("error", listenError);
+				reject (Error (err));
+			};
+
+			runError = (err) => {
+				Log.err (`Datagram socket error; err=${err}`);
+			};
+
+			socket.on ("error", listenError);
+			socket.once ("listening", () => {
+				let address, port;
+
+				socket.removeListener ("error", listenError);
+				try {
+					socket.setBroadcast (true);
+				}
+				catch (err) {
+					reject (Error (err));
+					return;
+				}
+				address = socket.address ();
+				if (address != null) {
+					port = address.port;
+				}
+				if (typeof port != "number") {
+					reject (Error ("Failed to read port from datagram socket"));
+					return;
+				}
+				Log.debug (`Datagram socket listening; port=${port}`);
+
+				socket.on ("error", runError);
+				socket.once ("close", () => {
+					socket.removeListener ("error", runError);
+					if (this.datagramSocket == socket) {
+						this.datagramSocket = null;
+					}
+				});
+
+				socket.on ("message", (msg, rinfo) => {
+					this.handleDatagramMessage (msg);
+				});
+
+				this.datagramSocket = socket;
+				this.datagramSocketPort = port;
+				this.isBroadcastReady = true;
+				resolve ();
+			});
+
+			socket.bind (App.UDP_PORT);
+		}));
+	}
+
+	// Return a promise that closes the datagram socket
+	closeDatagramSocket () {
+		return (new Promise ((resolve, reject) => {
+			let socket;
+
+			socket = this.datagramSocket;
+			if (socket == null) {
+				resolve ();
+				return;
+			}
+
+			socket.close ((err) => {
+				if (err) {
+					reject (Error (err));
+					return;
+				}
+				if (socket == this.datagramSocket) {
+					this.datagramSocket = null;
+					this.isBroadcastReady = false;
+				}
+				resolve ();
+			});
+		}));
+	}
+
+	// Start all servers and invoke startCompleteCallback (err) when complete. If startCompleteCallback is not provided, instead return a promise that executes the operation.
 	startAllServers (startCompleteCallback) {
 		let execute = (executeCallback) => {
 			let startServer, state;
@@ -815,65 +962,67 @@ class SystemAgent {
 
 	// Stop the agent's operation and invoke stopCallback when complete
 	stop (stopCallback) {
-		let stopServersComplete, writeStateComplete, stopHttp1Complete, stopHttp2Complete;
-
+		this.updateNetworkTask.stop ();
+		this.runDataStoreTask.stop ();
+		this.agentStatusTask.stop ();
 		this.accessControl.stop ();
 		this.taskGroup.stop ();
 		this.intentGroup.stop ();
-		this.agentStopEventEmitter.emit (STOP_EVENT);
 
-		setTimeout (() => {
-			this.stopAllServers (stopServersComplete);
-		}, 0);
-		stopServersComplete = () => {
-			if (! this.isStarted) {
-				writeStateComplete ();
+		this.closeDatagramSocket ().then (() => {
+			return (this.closeMainHttpServer ());
+		}).then (() => {
+			return (this.closeSecondaryHttpServer ());
+		}).then (() => {
+			return (this.stopAllServers ());
+		}).then (() => {
+			if (this.isStarted) {
+				return (this.intentGroup.writeState ());
 			}
-			else {
-				this.intentGroup.writeState (writeStateComplete);
-			}
-		};
-		writeStateComplete = () => {
-			if (this.httpServer1 == null) {
-				stopHttp1Complete ();
-			}
-			else {
-				this.httpServer1.close (stopHttp1Complete);
-			}
-		};
-		stopHttp1Complete = () => {
-			if (this.httpServer2 == null) {
-				stopHttp2Complete ();
-			}
-			else {
-				this.httpServer2.close (stopHttp2Complete);
-			}
-		};
-		stopHttp2Complete = () => {
+		}).catch ((err) => {
+			Log.debug (`Error stopping servers; err=${err}`);
+		}).then (() => {
 			stopCallback ();
-		};
+		});
 	}
 
-	// Stop all servers and invoke endCallback when complete
+	// Stop all servers and invoke endCallback when complete. If endCallback is not provided, instead return a promise that executes the operation.
 	stopAllServers (endCallback) {
-		let stopNextServer, stopComplete, serverindex;
+		let execute = (executeCallback) => {
+			let stopNextServer, stopComplete, serverindex;
 
-		stopNextServer = () => {
-			if (serverindex >= this.serverList.length) {
-				endCallback ();
-				return;
-			}
+			stopNextServer = () => {
+				if (serverindex >= this.serverList.length) {
+					executeCallback ();
+					return;
+				}
 
-			this.serverList[serverindex].stop (stopComplete);
-		};
+				this.serverList[serverindex].stop (stopComplete);
+			};
 
-		stopComplete = () => {
-			++serverindex;
+			stopComplete = () => {
+				++serverindex;
+				stopNextServer ();
+			};
+
+			serverindex = 0;
 			stopNextServer ();
 		};
 
-		serverindex = 0;
-		stopNextServer ();
+		if (typeof endCallback == "function") {
+			execute (endCallback);
+		}
+		else {
+			return (new Promise ((resolve, reject) => {
+				execute ((err) => {
+					if (err != null) {
+						reject (Error (err));
+						return;
+					}
+					resolve ();
+				});
+			}));
+		}
 	}
 
 	// Reset the urlHostname value as appropriate for configured values and detected interfaces
@@ -914,7 +1063,7 @@ class SystemAgent {
 			this.urlHostname = urlhostname;
 		}
 		else {
-			this.urlHostname = Os.hostname ();
+			this.urlHostname = "127.0.0.1";
 		}
 	}
 
@@ -1181,7 +1330,7 @@ class SystemAgent {
 					response.setHeader ("Content-Type", contenttype);
 					response.setHeader ("Content-Length", fileStats.size);
 					stream.pipe (response);
-					stream.on ("close", () => {
+					stream.once ("close", () => {
 						response.end ();
 					});
 
@@ -1267,7 +1416,7 @@ class SystemAgent {
 				response.setHeader ("Content-Length", stats.size);
 				Log.debug4 (`HTTP file response; url=${request.url} path=${filePath} contentType=${contentType} size=${stats.size}`);
 				stream.pipe (response);
-				stream.on ("close", () => {
+				stream.once ("close", () => {
 					response.end ();
 				});
 
@@ -1319,9 +1468,7 @@ class SystemAgent {
 			urlPath = "/" + urlPath;
 		}
 		this.secondaryRequestHandlerMap[urlPath] = handler;
-		if (this.isStarted && (this.httpServer2 == null)) {
-			this.startSecondaryHttpServer ().then (() => { });
-		}
+		this.shouldResetNetworkServers = true;
 	}
 
 	// Set a main server webroot handler for the specified URL path and file path, relative to the application webroot directory
@@ -1344,9 +1491,7 @@ class SystemAgent {
 			filePath = urlPath;
 		}
 		this.secondaryWebrootMap[urlPath] = filePath;
-		if (this.isStarted && (this.httpServer2 == null)) {
-			this.startSecondaryHttpServer ().then (() => { });
-		}
+		this.shouldResetNetworkServers = true;
 	}
 
 	// Set a handler for the specified command type. If a matching request is received, the handler function is invoked with "client" (a socket.io client) and "cmdInv" (a SystemInterface command invocation object) parameters.
@@ -1491,15 +1636,16 @@ class SystemAgent {
 		FsUtil.writeStateFile (this.runStatePath, this.runState, endCallback);
 	}
 
-	// Execute actions needed to maintain the datagram socket and invoke endCallback when complete
-	updateDatagramSocket (endCallback) {
-		let addrmap, interfaces, addresses, item, ip, ischanged, createSocket;
+	// Execute actions appropriate for current networking state and invoke endCallback when complete
+	updateNetwork (endCallback) {
+		let shouldreset, addressmap, broadcastmap, interfaces, ip;
 
-		addrmap = { };
+		shouldreset = false;
+		addressmap = { };
+		broadcastmap = { };
 		interfaces = Os.networkInterfaces ();
-		for (let i in interfaces) {
-			addresses = interfaces[i];
-			for (let addr of addresses) {
+		for (let name in interfaces) {
+			for (let addr of interfaces[name]) {
 				if (addr.internal) {
 					continue;
 				}
@@ -1507,97 +1653,51 @@ class SystemAgent {
 					// TODO: Possibly support IPv6 interface addresses
 					continue;
 				}
+				addressmap[name] = addr.address;
 
 				ip = new Ipv4Address (addr.address);
 				ip.setNetmask (addr.netmask);
-				addrmap[i] = ip.getBroadcastAddress ();
+				broadcastmap[name] = ip.getBroadcastAddress ();
 				break;
 			}
 		}
-
-		if (Object.keys (addrmap).length <= 0) {
-			if (Object.keys (this.datagramBroadcastAddressMap).length > 0) {
-				this.datagramBroadcastAddressMap = { };
-			}
-			if (this.datagramSocket != null) {
-				Log.debug ("Close datagram socket (no broadcast addresses available)");
-				this.isBroadcastReady = false;
-				this.datagramSocket.close ();
-				this.datagramSocket = null;
-			}
+		if (this.shouldResetNetworkServers || (Object.keys (addressmap).length != Object.keys (this.networkAddressMap).length)) {
+			shouldreset = true;
 		}
 		else {
-			ischanged = false;
-			if (Object.keys (addrmap).length != Object.keys (this.datagramBroadcastAddressMap).length) {
-				ischanged = true;
-			}
-			else {
-				for (let i in addrmap) {
-					if (addrmap[i] != this.datagramBroadcastAddressMap[i]) {
-						ischanged = true;
-						break;
-					}
+			for (let name in addressmap) {
+				if ((addressmap[name] !== this.networkAddressMap[name]) || (broadcastmap[name] !== this.broadcastAddressMap[name])) {
+					shouldreset = true;
 				}
-			}
-
-			if (ischanged) {
-				if (this.datagramSocket != null) {
-					this.isBroadcastReady = false;
-					this.datagramSocket.close ();
-					this.datagramSocket = null;
-				}
-				this.datagramBroadcastAddressMap = addrmap;
-			}
-
-			if (this.datagramSocket == null) {
-				createSocket = () => {
-					let socket;
-
-					socket = Dgram.createSocket ("udp4");
-					socket.on ("error", (err) => {
-						Log.err (`Datagram socket error; err=${err}`);
-						socket.close ();
-						this.isBroadcastReady = false;
-						this.datagramSocket = null;
-					});
-					socket.on ("listening", () => {
-						let address, port;
-
-						try {
-							socket.setBroadcast (true);
-						}
-						catch (e) {
-							this.isBroadcastReady = false;
-							this.datagramSocket = null;
-							Log.warn (`Failed to enable broadcast socket, network functions may be unavailable; err=${err}`);
-							return;
-						}
-						address = socket.address ();
-						if (address != null) {
-							port = address.port;
-						}
-						if (typeof port != "number") {
-							this.isBroadcastReady = false;
-							this.datagramSocket = null;
-							Log.warn ("Failed to read port from datagram socket, network functions may be unavailable");
-							return;
-						}
-						Log.debug (`Datagram socket listening; port=${port}`);
-						this.datagramSocketPort = port;
-						this.isBroadcastReady = true;
-					});
-					socket.on ("message", (msg, rinfo) => {
-						this.handleDatagramMessage (msg);
-					});
-
-					socket.bind (App.UDP_PORT);
-					return (socket);
-				};
-				this.datagramSocket = createSocket ();
 			}
 		}
+		this.networkAddressMap = addressmap;
+		this.broadcastAddressMap = broadcastmap;
 
-		process.nextTick (endCallback);
+		if (! shouldreset) {
+			process.nextTick (endCallback);
+			return;
+		}
+
+		Log.debug2 (`Reset network resources; networkAddresses=${JSON.stringify (this.networkAddressMap)} broadcastAddresses=${JSON.stringify (this.broadcastAddressMap)}`);
+		this.shouldResetNetworkServers = false;
+		this.closeMainHttpServer ().then (() => {
+			return (this.closeSecondaryHttpServer ());
+		}).then (() => {
+			return (this.closeDatagramSocket ());
+		}).then (() => {
+			return (this.startMainHttpServer ());
+		}).then (() => {
+			if ((Object.keys (this.secondaryRequestHandlerMap).length > 0) || (Object.keys (this.secondaryWebrootMap).length > 0)) {
+				return (this.startSecondaryHttpServer ());
+			}
+		}).then (() => {
+			return (this.startDatagramSocket ());
+		}).catch ((err) => {
+			Log.err (`Failed to start network servers; err=${err}`);
+		}).then (() => {
+			endCallback ();
+		});
 	}
 
 	// Execute actions to emit status update events if needed and invoke endCallback when complete
@@ -1605,24 +1705,26 @@ class SystemAgent {
 		let agentstatus, shouldwrite;
 
 		agentstatus = this.getStatus ();
-		if (this.lastAgentStatus != null) {
-			shouldwrite = (agentstatus.params.taskCount !== this.lastAgentStatus.params.taskCount) ||
-				(agentstatus.params.runCount !== this.lastAgentStatus.params.runCount) ||
-				(agentstatus.params.runTaskName !== this.lastAgentStatus.params.runTaskName) ||
-				(agentstatus.params.runTaskSubtitle !== this.lastAgentStatus.params.runTaskSubtitle) ||
-				(agentstatus.params.runTaskPercentComplete !== this.lastAgentStatus.params.runTaskPercentComplete);
+		if (agentstatus != null) {
+			if (this.lastAgentStatus != null) {
+				shouldwrite = (agentstatus.params.taskCount !== this.lastAgentStatus.params.taskCount) ||
+					(agentstatus.params.runCount !== this.lastAgentStatus.params.runCount) ||
+					(agentstatus.params.runTaskName !== this.lastAgentStatus.params.runTaskName) ||
+					(agentstatus.params.runTaskSubtitle !== this.lastAgentStatus.params.runTaskSubtitle) ||
+					(agentstatus.params.runTaskPercentComplete !== this.lastAgentStatus.params.runTaskPercentComplete);
 
-			for (let server of this.serverList) {
-				if (server.findStatusChange (agentstatus)) {
-					shouldwrite = true;
+				for (let server of this.serverList) {
+					if (server.findStatusChange (agentstatus)) {
+						shouldwrite = true;
+					}
+				}
+
+				if (shouldwrite) {
+					this.agentStatusEventEmitter.emit (AGENT_STATUS_EVENT, agentstatus);
 				}
 			}
-
-			if (shouldwrite) {
-				this.agentStatusEventEmitter.emit (AGENT_STATUS_EVENT, agentstatus);
-			}
+			this.lastAgentStatus = agentstatus;
 		}
-		this.lastAgentStatus = agentstatus;
 
 		process.nextTick (endCallback);
 	}
@@ -1703,8 +1805,6 @@ class SystemAgent {
 
 	// Send a broadcast message using the provided string or Buffer value. Returns a boolean value indicating if the message was sent.
 	sendBroadcast (message) {
-		let i, item;
-
 		if (! this.isBroadcastReady) {
 			return (false);
 		}
@@ -1712,9 +1812,8 @@ class SystemAgent {
 		if (typeof message == "string") {
 			message = Buffer.from (message);
 		}
-		for (i in this.datagramBroadcastAddressMap) {
-			item = this.datagramBroadcastAddressMap[i];
-			this.datagramSocket.send (message, 0, message.length, SystemInterface.Constant.DefaultUdpPort, item);
+		for (let address of Object.values (this.broadcastAddressMap)) {
+			this.datagramSocket.send (message, 0, message.length, SystemInterface.Constant.DefaultUdpPort, address);
 		}
 		return (true);
 	}
@@ -1760,10 +1859,6 @@ class SystemAgent {
 	// Return an object containing an AgentStatus command that reflects current state, or null if the command could not be created
 	getStatus () {
 		let cmd, params;
-
-		if (! this.isBroadcastReady) {
-			return (null);
-		}
 
 		params = {
 			id: this.agentId,
@@ -2369,7 +2464,6 @@ class SystemAgent {
 	runProcess (execPath, execArgs, envParams, workingPath, dataCallback) {
 		return (new Promise ((resolve, reject) => {
 			let proc;
-
 			proc = new ExecProcess (execPath, execArgs, envParams, workingPath, (lines, lineCallback) => {
 				if (typeof dataCallback != "function") {
 					process.nextTick (lineCallback);

@@ -27,54 +27,28 @@
 * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 * POSSIBILITY OF SUCH DAMAGE.
 */
+// Class that generates pseudo-random numbers
+
 "use strict";
 
 const App = global.App || { };
-const Path = require ("path");
-const Log = require (App.SOURCE_DIRECTORY + "/Log");
-const FsUtil = require (App.SOURCE_DIRECTORY + "/FsUtil");
-const SystemInterface = require (App.SOURCE_DIRECTORY + "/SystemInterface");
-const TaskBase = require (App.SOURCE_DIRECTORY + "/Task/TaskBase");
 
-class GetDiskSpace extends TaskBase {
+class Prng {
 	constructor () {
-		super ();
-		this.name = App.uiText.getText ("getDiskSpaceTaskName");
-
-		this.configureParams = [
-			{
-				name: "targetPath",
-				type: "string",
-				flags: SystemInterface.ParamFlag.Required | SystemInterface.ParamFlag.NotEmpty,
-				description: "The path to the target directory for the operation"
-			}
-		];
-
-		this.runSourcePath = Path.join (App.BIN_DIRECTORY, "GetDiskSpace_" + process.platform + ".js");
 	}
 
-	// Subclass method. Implementations should execute task actions and call end when complete.
-	doRun () {
-		FsUtil.fileExists (this.runSourcePath).then ((exists) => {
-			let fn;
+	// Return a randomly selected integer within the provided inclusive range
+	getRandomInteger (min, max) {
+		let diff;
 
-			try {
-				fn = require (this.runSourcePath);
-			}
-			catch (e) {
-				return (Promise.reject (e));
-			}
-
-			return (fn (this));
-		}).then ((data) => {
-			this.resultObject = data;
-			this.setPercentComplete (100);
-			this.isSuccess = true;
-		}).catch ((err) => {
-			Log.debug (`${this.toString ()} failed; err=${err}`);
-		}).then (() => {
-			this.end ();
-		});
+		// TODO: Provide capability for instances of this class to store a seed value (currently using the system seed for all instances)
+		min = Math.floor (min);
+		max = Math.floor (max);
+		diff = max - min;
+		if (diff <= 0) {
+			return (Math.floor (min));
+		}
+		return (Math.floor (min + (Math.random () * (diff + 1))));
 	}
 }
-module.exports = GetDiskSpace;
+module.exports = Prng;

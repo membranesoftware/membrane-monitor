@@ -1,5 +1,5 @@
 /*
-* Copyright 2018-2019 Membrane Software <author@membranesoftware.com> https://membranesoftware.com
+* Copyright 2018-2020 Membrane Software <author@membranesoftware.com> https://membranesoftware.com
 *
 * Redistribution and use in source and binary forms, with or without
 * modification, are permitted provided that the following conditions are met:
@@ -86,6 +86,11 @@ exports.write = function (level, message) {
 
 // Write a message to the log at the ERR level
 exports.err = function (message) {
+	exports.write (exports.ERR, message);
+};
+
+// Write a message to the log at the ERR level
+exports.error = function (message) {
 	exports.write (exports.ERR, message);
 };
 

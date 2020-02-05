@@ -1,5 +1,5 @@
 /*
-* Copyright 2018-2019 Membrane Software <author@membranesoftware.com> https://membranesoftware.com
+* Copyright 2018-2020 Membrane Software <author@membranesoftware.com> https://membranesoftware.com
 *
 * Redistribution and use in source and binary forms, with or without
 * modification, are permitted provided that the following conditions are met:
@@ -36,6 +36,7 @@ const UuidV4 = require ("uuid/v4");
 const Result = require (App.SOURCE_DIRECTORY + "/Result");
 const Log = require (App.SOURCE_DIRECTORY + "/Log");
 const SystemInterface = require (App.SOURCE_DIRECTORY + "/SystemInterface");
+const Prng = require (App.SOURCE_DIRECTORY + "/Prng");
 const AgentControl = require (App.SOURCE_DIRECTORY + "/Intent/AgentControl");
 
 const UPDATE_LOG_PERIOD = 120000; // milliseconds
@@ -74,6 +75,8 @@ class IntentBase {
 
 		// Set values in this map for inclusion in status report strings
 		this.statusMap = { };
+
+		this.prng = new Prng ();
 	}
 
 	// Configure the intent's state using values in the provided params object. Returns a Result value.
@@ -219,6 +222,19 @@ class IntentBase {
 		// Default implementation does nothing
 	}
 
+	// Return an object containing a command with the default agent prefix and the provided parameters, or null if the command could not be validated, in which case an error log message is generated
+	createCommand (commandName, commandType, commandParams) {
+		let cmd;
+
+		cmd = SystemInterface.createCommand (App.systemAgent.getCommandPrefix (), commandName, commandType, commandParams);
+		if (SystemInterface.isError (cmd)) {
+			Log.err (`${this.toString ()} failed to create command invocation; commandName=${commandName} err=${cmd}`);
+			return (null);
+		}
+
+		return (cmd);
+	}
+
 	// Return a boolean value indicating if the specified time period has elapsed, relative to the intent's update time. startTime and period are both measured in milliseconds.
 	hasTimeElapsed (startTime, period) {
 		let diff;
@@ -278,44 +294,79 @@ class IntentBase {
 		return (a);
 	}
 
-	// Return a newly created array containing indexes for use in tracking choices from a source array
-	createChoiceArray (sourceArray) {
-		let a;
+	// Choose the next sequential item from itemArray. To track the chosen item, update choiceArray (expected to be an empty array for the first call). Returns the chosen item, or null if no items were available.
+	getSequentialChoice (itemArray, choiceArray) {
+		let result;
 
-		a = [ ];
-		for (let i = 0; i < sourceArray.length; ++i) {
-			a.push (i);
-		}
-
-		return (a);
-	}
-
-	// Return an object containing a command with the default agent prefix and the provided parameters, or null if the command could not be validated, in which case an error log message is generated
-	createCommand (commandName, commandType, commandParams) {
-		let cmd;
-
-		cmd = SystemInterface.createCommand (App.systemAgent.getCommandPrefix (), commandName, commandType, commandParams);
-		if (SystemInterface.isError (cmd)) {
-			Log.err (`${this.toString ()} failed to create command invocation; commandName=${commandName} err=${cmd}`);
+		if ((! Array.isArray (itemArray)) || (itemArray.length <= 0)) {
 			return (null);
 		}
-
-		return (cmd);
-	}
-
-	// Choose an index at random from the provided choice array, while updating the array to track the chosen item. Returns the chosen index, or -1 if no choices were available
-	getRandomChoice (choiceArray) {
-		let pos, result;
-
-		if (choiceArray.length <= 0) {
-			return (-1);
+		if (! Array.isArray (choiceArray)) {
+			return (itemArray[0]);
 		}
 
-		pos = App.systemAgent.getRandomInteger (0, choiceArray.length - 1);
-		result = choiceArray[pos];
-		choiceArray.splice (pos, 1);
+		if (choiceArray.length <= 0) {
+			this.populateChoiceArray (choiceArray, itemArray.length);
+		}
+		result = itemArray[choiceArray.shift ()];
+		if (choiceArray.length <= 0) {
+			this.populateChoiceArray (choiceArray, itemArray.length);
+		}
 
 		return (result);
+	}
+
+	// Choose an item at random from itemArray. To track the chosen item, update choiceArray (expected to be an empty array for the first call). Returns the chosen item, or null if no items were available.
+	getRandomChoice (itemArray, choiceArray) {
+		let index, result;
+
+		if ((! Array.isArray (itemArray)) || (itemArray.length <= 0)) {
+			return (null);
+		}
+		if (! Array.isArray (choiceArray)) {
+			return (itemArray[this.prng.getRandomInteger (0, itemArray.length - 1)]);
+		}
+
+		if (choiceArray.length <= 0) {
+			this.populateChoiceArray (choiceArray, itemArray.length, true);
+		}
+		index = choiceArray.shift ();
+		result = itemArray[index];
+		if (choiceArray.length <= 0) {
+			this.populateChoiceArray (choiceArray, itemArray.length, true, index);
+		}
+
+		return (result);
+	}
+
+	// Add index items to choiceArray as needed to track a new choice run, optionally shuffling the choices as they are added. If isShuffle is true and firstExcludeChoice is provided, ensure that the first populated choice item does not match that value.
+	populateChoiceArray (choiceArray, choiceCount, isShuffle, firstExcludeChoice) {
+		let choices, pos;
+
+		if (isShuffle !== true) {
+			for (let i = 0; i < choiceCount; ++i) {
+				choiceArray.push (i);
+			}
+			return;
+		}
+
+		choices = [ ];
+		for (let i = 0; i < choiceCount; ++i) {
+			choices.push (i);
+		}
+		for (let i = 0; i < choiceCount; ++i) {
+			while (true) {
+				pos = this.prng.getRandomInteger (0, choices.length - 1);
+				if (typeof firstExcludeChoice == "number") {
+					if ((i == 0) && (choiceCount > 1) && (choices[pos] == firstExcludeChoice)) {
+						continue;
+					}
+				}
+				break;
+			}
+			choiceArray.push (choices[pos]);
+			choices.splice (pos, 1);
+		}
 	}
 
 	// Return an array containing contacted agents that cause the provided predicate function to generate a true value

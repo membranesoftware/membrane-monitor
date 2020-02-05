@@ -1,5 +1,5 @@
 /*
-* Copyright 2018-2019 Membrane Software <author@membranesoftware.com> https://membranesoftware.com
+* Copyright 2018-2020 Membrane Software <author@membranesoftware.com> https://membranesoftware.com
 *
 * Redistribution and use in source and binary forms, with or without
 * modification, are permitted provided that the following conditions are met:
@@ -30,7 +30,7 @@
 // Functions for use in sending or receiving remote commands
 
 var SystemInterface = exports;
-SystemInterface.Version = "20-stable-4ad21c56";
+SystemInterface.Version = "21-stable-4fb0b83b";
 SystemInterface.Command = { };
 SystemInterface.Command.AgentConfiguration = {"id":45,"name":"AgentConfiguration","paramType":"AgentConfiguration"};
 SystemInterface.Command.AgentContact = {"id":33,"name":"AgentContact","paramType":"AgentContact"};
@@ -200,7 +200,7 @@ SystemInterface.Type.MediaItem = [{"name":"id","type":"string","flags":35},{"nam
 SystemInterface.Type.MediaServerConfiguration = [{"name":"mediaPath","type":"string","flags":2},{"name":"dataPath","type":"string","flags":2},{"name":"scanPeriod","type":"number","flags":16}];
 SystemInterface.Type.MediaServerStatus = [{"name":"isReady","type":"boolean","flags":1},{"name":"mediaCount","type":"number","flags":17},{"name":"mediaPath","type":"string","flags":65},{"name":"thumbnailPath","type":"string","flags":65,"defaultValue":""},{"name":"thumbnailCount","type":"number","flags":17,"defaultValue":0}];
 SystemInterface.Type.MonitorServerConfiguration = [];
-SystemInterface.Type.MonitorServerStatus = [{"name":"freeStorage","type":"number","flags":17},{"name":"totalStorage","type":"number","flags":17},{"name":"streamCount","type":"number","flags":17},{"name":"thumbnailPath","type":"string","flags":65,"defaultValue":""},{"name":"screenshotPath","type":"string","flags":65,"defaultValue":""},{"name":"screenshotTime","type":"number","flags":17,"defaultValue":0},{"name":"isPlaying","type":"boolean","flags":1},{"name":"isPlayPaused","type":"boolean","flags":1},{"name":"mediaName","type":"string","flags":1,"defaultValue":""},{"name":"isShowingUrl","type":"boolean","flags":1},{"name":"showUrl","type":"string","flags":1,"defaultValue":""},{"name":"intentName","type":"string","flags":1,"defaultValue":""}];
+SystemInterface.Type.MonitorServerStatus = [{"name":"freeStorage","type":"number","flags":17},{"name":"totalStorage","type":"number","flags":17},{"name":"streamCount","type":"number","flags":17},{"name":"thumbnailPath","type":"string","flags":65,"defaultValue":""},{"name":"screenshotPath","type":"string","flags":65,"defaultValue":""},{"name":"screenshotTime","type":"number","flags":17,"defaultValue":0},{"name":"isPlaying","type":"boolean","flags":1},{"name":"isPlayPaused","type":"boolean","flags":1},{"name":"mediaName","type":"string","flags":1,"defaultValue":""},{"name":"isShowUrlAvailable","type":"boolean","flags":1},{"name":"isShowingUrl","type":"boolean","flags":1},{"name":"showUrl","type":"string","flags":1,"defaultValue":""},{"name":"intentName","type":"string","flags":1,"defaultValue":""}];
 SystemInterface.Type.PlayCacheStream = [{"name":"streamId","type":"string","flags":35},{"name":"startPosition","type":"number","flags":16},{"name":"minStartPositionDelta","type":"number","flags":128,"rangeMin":0,"rangeMax":100},{"name":"maxStartPositionDelta","type":"number","flags":128,"rangeMin":0,"rangeMax":100}];
 SystemInterface.Type.PlayMedia = [{"name":"mediaName","type":"string","flags":1,"defaultValue":""},{"name":"streamUrl","type":"string","flags":66},{"name":"streamId","type":"string","flags":34},{"name":"startPosition","type":"number","flags":16},{"name":"minStartPositionDelta","type":"number","flags":128,"rangeMin":0,"rangeMax":100},{"name":"maxStartPositionDelta","type":"number","flags":128,"rangeMin":0,"rangeMax":100},{"name":"thumbnailUrl","type":"string","flags":66}];
 SystemInterface.Type.RemoveIntent = [{"name":"id","type":"string","flags":35}];
@@ -259,7 +259,7 @@ SystemInterface.Type.MediaItem.updateHash = function(p, f) {f("" + Math.trunc (p
 SystemInterface.Type.MediaServerConfiguration.updateHash = function(p, f) {if (typeof p.dataPath == "string") {f(p.dataPath);}if (typeof p.mediaPath == "string") {f(p.mediaPath);}if (typeof p.scanPeriod == "number") {f("" + Math.trunc (p.scanPeriod));}};
 SystemInterface.Type.MediaServerStatus.updateHash = function(p, f) {f(p.isReady ? "true" : "false");f("" + Math.trunc (p.mediaCount));f(p.mediaPath);f("" + Math.trunc (p.thumbnailCount));f(p.thumbnailPath);};
 SystemInterface.Type.MonitorServerConfiguration.updateHash = function(p, f) {};
-SystemInterface.Type.MonitorServerStatus.updateHash = function(p, f) {f("" + Math.trunc (p.freeStorage));f(p.intentName);f(p.isPlayPaused ? "true" : "false");f(p.isPlaying ? "true" : "false");f(p.isShowingUrl ? "true" : "false");f(p.mediaName);f(p.screenshotPath);f("" + Math.trunc (p.screenshotTime));f(p.showUrl);f("" + Math.trunc (p.streamCount));f(p.thumbnailPath);f("" + Math.trunc (p.totalStorage));};
+SystemInterface.Type.MonitorServerStatus.updateHash = function(p, f) {f("" + Math.trunc (p.freeStorage));f(p.intentName);f(p.isPlayPaused ? "true" : "false");f(p.isPlaying ? "true" : "false");f(p.isShowUrlAvailable ? "true" : "false");f(p.isShowingUrl ? "true" : "false");f(p.mediaName);f(p.screenshotPath);f("" + Math.trunc (p.screenshotTime));f(p.showUrl);f("" + Math.trunc (p.streamCount));f(p.thumbnailPath);f("" + Math.trunc (p.totalStorage));};
 SystemInterface.Type.PlayCacheStream.updateHash = function(p, f) {if (typeof p.maxStartPositionDelta == "number") {f("" + Math.trunc (p.maxStartPositionDelta));}if (typeof p.minStartPositionDelta == "number") {f("" + Math.trunc (p.minStartPositionDelta));}if (typeof p.startPosition == "number") {f("" + Math.trunc (p.startPosition));}f(p.streamId);};
 SystemInterface.Type.PlayMedia.updateHash = function(p, f) {if (typeof p.maxStartPositionDelta == "number") {f("" + Math.trunc (p.maxStartPositionDelta));}f(p.mediaName);if (typeof p.minStartPositionDelta == "number") {f("" + Math.trunc (p.minStartPositionDelta));}if (typeof p.startPosition == "number") {f("" + Math.trunc (p.startPosition));}if (typeof p.streamId == "string") {f(p.streamId);}if (typeof p.streamUrl == "string") {f(p.streamUrl);}if (typeof p.thumbnailUrl == "string") {f(p.thumbnailUrl);}};
 SystemInterface.Type.RemoveIntent.updateHash = function(p, f) {f(p.id);};

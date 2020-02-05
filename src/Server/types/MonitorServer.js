@@ -1,5 +1,5 @@
 /*
-* Copyright 2018-2019 Membrane Software <author@membranesoftware.com> https://membranesoftware.com
+* Copyright 2018-2020 Membrane Software <author@membranesoftware.com> https://membranesoftware.com
 *
 * Redistribution and use in source and binary forms, with or without
 * modification, are permitted provided that the following conditions are met:
@@ -46,7 +46,7 @@ const ServerBase = require (App.SOURCE_DIRECTORY + "/Server/ServerBase");
 const THUMBNAIL_PATH = "/mon/a.jpg";
 const SCREENSHOT_PATH = "/mon/b.jpg";
 const SCREENSHOT_FILENAME = "screenshot.jpg";
-const X_DISPLAY = ":0.0";
+const RUNLEVEL_PROCESS_NAME = "/sbin/runlevel";
 const XSET_PROCESS_NAME = "/usr/bin/xset";
 const PS_PROCESS_NAME = "/bin/ps";
 const KILLALL_PROCESS_NAME = "/usr/bin/killall";
@@ -55,6 +55,7 @@ const OMXPLAYER_PROCESS_NAME = "/usr/bin/omxplayer";
 const SCROT_PROCESS_NAME = "/usr/bin/scrot";
 const XDPYINFO_PROCESS_NAME = "/usr/bin/xdpyinfo";
 const XDOTOOL_PROCESS_NAME = "/usr/bin/xdotool";
+const GET_DISPLAY_INFO_PERIOD = 27500; // milliseconds
 const RUN_BROWSER_PROCESS_PERIOD = 1000; // milliseconds
 const FIND_BROWSER_PROCESS_PERIOD = 15000; // milliseconds
 const GET_DISK_SPACE_PERIOD = 15 * 60 * 1000; // milliseconds
@@ -67,6 +68,13 @@ class MonitorServer extends ServerBase {
 		this.description = "Accept and execute commands to control content shown by a display";
 
 		this.configureParams = [
+			{
+				name: "xDisplay",
+				type: "string",
+				flags: SystemInterface.ParamFlag.Required | SystemInterface.ParamFlag.NotEmpty,
+				description: "The display name to target for X server commands, or \"none\" to disable X server commands",
+				defaultValue: ":0.0"
+			},
 			{
 				name: "screenshotPeriod",
 				type: "number",
@@ -83,11 +91,14 @@ class MonitorServer extends ServerBase {
 		this.playProcess = null;
 		this.playMediaName = "";
 		this.isPlayPaused = false;
+		this.xDisplay = "";
+		this.isShowUrlAvailable = false;
 		this.isShowingUrl = false;
 		this.browserProcess = null;
 		this.browserUrl = "";
 		this.findBrowserProcessTask = new RepeatTask ();
 		this.runBrowserProcessTask = new RepeatTask ();
+		this.getDisplayInfoTask = new RepeatTask ();
 		this.totalStorage = 0; // bytes
 		this.freeStorage = 0; // bytes
 		this.usedStorage = 0; // bytes
@@ -113,13 +124,21 @@ class MonitorServer extends ServerBase {
 		let deactivateDesktopBlankComplete;
 
 		this.isPlayPaused = false;
+		if (this.configureMap.xDisplay.toLowerCase () == "none") {
+			Log.info (`${this.toString ()} X server commands disabled by configuration, xDisplay=none`);
+		}
+		else {
+			this.xDisplay = this.configureMap.xDisplay;
+		}
+
 		FsUtil.createDirectory (this.cacheDataPath).then (() => {
 			return (Task.executeTask ("GetDiskSpace", { targetPath: this.cacheDataPath }));
 		}).then ((resultObject) => {
 			this.totalStorage = resultObject.total;
 			this.usedStorage = resultObject.used;
 			this.freeStorage = resultObject.free;
-
+			return (this.awaitSystemReady ());
+		}).then (() => {
 			return (this.getDisplayInfo ());
 		}).then (() => {
 			return (this.readStreamCache ());
@@ -197,6 +216,16 @@ class MonitorServer extends ServerBase {
 				App.systemAgent.writeFileResponse (request, response, path, "image/jpeg");
 			});
 
+			if (this.xDisplay != "") {
+				this.getDisplayInfoTask.setRepeating ((callback) => {
+					this.getDisplayInfo ().catch ((err) => {
+						// Do nothing
+					}).then (() => {
+						callback ();
+					});
+				}, GET_DISPLAY_INFO_PERIOD);
+			}
+
 			if (this.configureMap.screenshotPeriod > 0) {
 				this.screenshotTask.setRepeating ((callback) => {
 					this.captureScreenshot (callback);
@@ -223,22 +252,78 @@ class MonitorServer extends ServerBase {
 		});
 	}
 
+	// Return a promise that waits until the host system becomes ready to execute monitor operations
+	awaitSystemReady () {
+		return (new Promise ((resolve, reject) => {
+			let runlevel, task;
+
+			runlevel = "";
+			task = new RepeatTask ();
+			task.setRepeating ((callback) => {
+				App.systemAgent.runProcess (RUNLEVEL_PROCESS_NAME, [ ], { }, "", (lines, parseCallback) => {
+					if (runlevel == "") {
+						for (let line of lines) {
+							if (line.indexOf ("unknown") < 0) {
+								runlevel = line;
+								break;
+							}
+						}
+					}
+					process.nextTick (parseCallback);
+				}).then ((isExitSuccess) => {
+					if (runlevel != "") {
+						task.stop ();
+						resolve ();
+					}
+				}).catch ((err) => {
+					Log.err (`Error reading system ready state; err=${err}`);
+					task.stop ();
+					reject (err);
+				}).then (() => {
+					callback ();
+				});
+			}, App.HEARTBEAT_PERIOD * 4);
+		}));
+	}
+
 	// Return a promise that reads and stores display info values
 	getDisplayInfo () {
 		return (new Promise ((resolve, reject) => {
-			App.systemAgent.runProcess (XDPYINFO_PROCESS_NAME, [ ], { "DISPLAY": X_DISPLAY }, "", (lines, parseCallback) => {
+			let displaywidth, displayheight;
+
+			if (this.xDisplay == "") {
+				resolve ();
+				return;
+			}
+
+			Log.debug (`${this.toString ()} getDisplayInfo; xDisplay=${this.xDisplay}`);
+			displaywidth = 0;
+			displayheight = 0;
+			App.systemAgent.runProcess (XDPYINFO_PROCESS_NAME, [ ], { "DISPLAY": this.xDisplay }, "", (lines, parseCallback) => {
 				let m;
 
 				for (let line of lines) {
 					m = line.match (/dimensions:.*?([0-9]+)x([0-9]+)[^0-9]/);
 					if (m != null) {
-						this.displayWidth = parseInt (m[1]);
-						this.displayHeight = parseInt (m[2]);
-						Log.debug (`${this.toString ()} read display info; displayWidth=${this.displayWidth} displayHeight=${this.displayHeight}`);
+						displaywidth = parseInt (m[1]);
+						displayheight = parseInt (m[2]);
 					}
 				}
 				process.nextTick (parseCallback);
 			}).then ((isExitSuccess) => {
+				if ((displaywidth <= 0) || (displayheight <= 0)) {
+					this.isShowUrlAvailable = false;
+				}
+				else {
+					this.displayWidth = displaywidth;
+					this.displayHeight = displayheight;
+					this.isShowUrlAvailable = true;
+				}
+				Log.debug (`${this.toString ()} getDisplayInfo xdpyinfo process ended; isExitSuccess=${isExitSuccess} displayWidth=${this.displayWidth} displayHeight=${this.displayHeight} isShowUrlAvailable=${this.isShowUrlAvailable}`);
+				resolve ();
+			}).catch ((err) => {
+				Log.debug (`Error reading display info; err=${err}`);
+				this.isShowUrlAvailable = false;
 				resolve ();
 			});
 		}));
@@ -329,6 +414,7 @@ class MonitorServer extends ServerBase {
 	// Execute subclass-specific stop operations and invoke the provided callback when complete
 	doStop (stopCallback) {
 		this.getDiskSpaceTask.stop ();
+		this.getDisplayInfoTask.stop ();
 		this.clear (stopCallback);
 	}
 
@@ -346,6 +432,7 @@ class MonitorServer extends ServerBase {
 			isPlaying: this.isPlaying,
 			isPlayPaused: this.isPlayPaused,
 			mediaName: this.isPlaying ? this.playMediaName : "",
+			isShowUrlAvailable: this.isShowUrlAvailable,
 			isShowingUrl: this.isShowingUrl,
 			showUrl: this.isShowingUrl ? this.browserUrl : ""
 		};
@@ -666,6 +753,12 @@ class MonitorServer extends ServerBase {
 	// Execute a ShowWebUrl command and return a result command
 	showWebUrl (cmdInv) {
 		let clearComplete, deactivateDesktopBlankComplete;
+
+		if (! this.isShowUrlAvailable) {
+			return (this.createCommand ("CommandResult", SystemInterface.Constant.Monitor, {
+				success: false
+			}));
+		}
 		if (cmdInv.prefix[SystemInterface.Constant.AgentIdPrefixField] != App.systemAgent.agentId) {
 			App.systemAgent.removeIntentGroup (this.name);
 		}
@@ -691,6 +784,12 @@ class MonitorServer extends ServerBase {
 	runBrowserProcess (url, callback) {
 		let proc;
 
+		if (this.xDisplay == "") {
+			this.runBrowserProcessTask.stop ();
+			process.nextTick (callback);
+			return;
+		}
+
 		Log.debug (`${this.toString ()} run browser; url=${url}`);
 		this.findBrowserProcess (() => {
 			if (this.isShowingUrl) {
@@ -705,7 +804,7 @@ class MonitorServer extends ServerBase {
 				"--user-data-dir=/tmp",
 				url
 			], {
-				"DISPLAY": X_DISPLAY
+				"DISPLAY": this.xDisplay
 			}, "", (lines, parseCallback) => {
 				for (let line of lines) {
 					Log.debug3 (`${this.toString ()} browser output: ${line}`);
@@ -722,7 +821,7 @@ class MonitorServer extends ServerBase {
 			this.browserProcess = proc;
 
 			if ((this.displayWidth > 0) && (this.displayHeight > 0)) {
-				App.systemAgent.runProcess (XDOTOOL_PROCESS_NAME, [ "mousemove", this.displayWidth, 0 ], { "DISPLAY": X_DISPLAY }).then ((isExitSuccess) => {
+				App.systemAgent.runProcess (XDOTOOL_PROCESS_NAME, [ "mousemove", this.displayWidth, 0 ], { "DISPLAY": this.xDisplay }).then ((isExitSuccess) => {
 				}).catch ((err) => {
 					Log.err (`${this.toString ()} failed to run xdotool; err=${err}`);
 				});
@@ -798,10 +897,15 @@ class MonitorServer extends ServerBase {
 
 	// Deactivate and disable desktop screen blank functionality and invoke the provided callback when complete
 	deactivateDesktopBlank (endCallback) {
-		App.systemAgent.runProcess (XSET_PROCESS_NAME, [ "s", "off" ], { "DISPLAY": X_DISPLAY }).then ((isExitSuccess) => {
-			return (App.systemAgent.runProcess (XSET_PROCESS_NAME, [ "-dpms" ], { "DISPLAY": X_DISPLAY }));
+		if (this.xDisplay == "") {
+			process.nextTick (endCallback);
+			return;
+		}
+
+		App.systemAgent.runProcess (XSET_PROCESS_NAME, [ "s", "off" ], { "DISPLAY": this.xDisplay }).then ((isExitSuccess) => {
+			return (App.systemAgent.runProcess (XSET_PROCESS_NAME, [ "-dpms" ], { "DISPLAY": this.xDisplay }));
 		}).then ((isExitSuccess) => {
-			return (App.systemAgent.runProcess (XSET_PROCESS_NAME, [ "s", "noblank" ], { "DISPLAY": X_DISPLAY }));
+			return (App.systemAgent.runProcess (XSET_PROCESS_NAME, [ "s", "noblank" ], { "DISPLAY": this.xDisplay }));
 		}).catch ((err) => {
 			Log.err (`${this.toString ()} error deactivating desktop blank; err=${err}`);
 		}).then (() => {
@@ -811,7 +915,12 @@ class MonitorServer extends ServerBase {
 
 	// Activate the desktop screen blank and invoke the provided callback when complete
 	activateDesktopBlank (endCallback) {
-		App.systemAgent.runProcess (XSET_PROCESS_NAME, [ "s", "activate" ], { "DISPLAY": X_DISPLAY }).catch ((err) => {
+		if (this.xDisplay == "") {
+			process.nextTick (endCallback);
+			return;
+		}
+
+		App.systemAgent.runProcess (XSET_PROCESS_NAME, [ "s", "activate" ], { "DISPLAY": this.xDisplay }).catch ((err) => {
 			Log.err (`${this.toString ()} error activating desktop blank; err=${err}`);
 		}).then (() => {
 			endCallback ();
@@ -921,13 +1030,14 @@ class MonitorServer extends ServerBase {
 
 		item = this.streamMap[cmdInv.params.id];
 		if (item == null) {
-			return (server.createCommand ("CommandResult", SystemInterface.Constant.Monitor, {
+			return (this.createCommand ("CommandResult", SystemInterface.Constant.Monitor, {
 				success: false
 			}));
 		}
 
 		removepath = Path.join (this.cacheDataPath, cmdInv.params.id);
 		delete (this.streamMap[cmdInv.params.id]);
+		delete (this.streamSourceMap[item.params.sourceId]);
 
 		FsUtil.removeDirectory (removepath, (err) => {
 			if (err != null) {
@@ -982,7 +1092,7 @@ class MonitorServer extends ServerBase {
 	// Update the monitor's screenshot image to reflect display state and invoke the provided callback when complete
 	captureScreenshot (endCallback) {
 		let now, targetpath;
-		if (this.isPlaying) {
+		if ((this.xDisplay == "") || this.isPlaying) {
 			process.nextTick (endCallback);
 			return;
 		}
@@ -991,7 +1101,7 @@ class MonitorServer extends ServerBase {
 		targetpath = Path.join (App.DATA_DIRECTORY, `screenshot_${now}.jpg`);
 		App.systemAgent.runProcess (SCROT_PROCESS_NAME,
 			[ targetpath, "-z", "-q", "90" ],
-			{ "DISPLAY": X_DISPLAY }
+			{ "DISPLAY": this.xDisplay }
 		).then (() => {
 			return (FsUtil.renameFile (targetpath, Path.join (App.DATA_DIRECTORY, SCREENSHOT_FILENAME)));
 		}).then (() => {

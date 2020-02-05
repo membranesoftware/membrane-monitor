@@ -1,5 +1,5 @@
 /*
-* Copyright 2018-2019 Membrane Software <author@membranesoftware.com> https://membranesoftware.com
+* Copyright 2018-2020 Membrane Software <author@membranesoftware.com> https://membranesoftware.com
 *
 * Redistribution and use in source and binary forms, with or without
 * modification, are permitted provided that the following conditions are met:
@@ -138,16 +138,32 @@ class IntentGroup {
 		process.nextTick (endCallback);
 	}
 
-	// Write the intent group's run state to storage and execute the provided callback when complete
+	// Write the intent group's run state to storage and invoke endCallback when complete. If endCallback is not provided, instead return a promise that executes the operation.
 	writeState (endCallback) {
-		let state, cmd;
+		let execute = (executeCallback) => {
+			let state;
 
-		state = { };
-		for (let intent of Object.values (this.intentMap)) {
-			state[intent.id] = intent.getIntentState ();
+			state = { };
+			for (let intent of Object.values (this.intentMap)) {
+				state[intent.id] = intent.getIntentState ();
+			}
+			App.systemAgent.updateRunState ({ intentState: state }, executeCallback);
+		};
+
+		if (typeof endCallback == "function") {
+			execute (endCallback);
 		}
-
-		App.systemAgent.updateRunState ({ intentState: state }, endCallback);
+		else {
+			return (new Promise ((resolve, reject) => {
+				execute ((err) => {
+					if (err != null) {
+						reject (Error (err));
+						return;
+					}
+					resolve ();
+				});
+			}));
+		}
 	}
 
 	// Add an intent to the group

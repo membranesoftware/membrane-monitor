@@ -1,5 +1,5 @@
 /*
-* Copyright 2018-2019 Membrane Software <author@membranesoftware.com> https://membranesoftware.com
+* Copyright 2018-2020 Membrane Software <author@membranesoftware.com> https://membranesoftware.com
 *
 * Redistribution and use in source and binary forms, with or without
 * modification, are permitted provided that the following conditions are met:
@@ -92,7 +92,7 @@ class WebDisplayIntent extends IntentBase {
 
 	// Perform actions appropriate for the current state of the application
 	doUpdate () {
-		let agents, cmd, url, curindex;
+		let agents, cmd, url;
 
 		if (! Array.isArray (this.state.urls)) {
 			this.state.urls = [ ];
@@ -127,6 +127,9 @@ class WebDisplayIntent extends IntentBase {
 			}
 
 			if ((typeof a.lastStatus.monitorServerStatus == "object") && (a.lastStatus.monitorServerStatus != null)) {
+				if (! a.lastStatus.monitorServerStatus.isShowUrlAvailable) {
+					return (false);
+				}
 				if (! a.lastStatus.monitorServerStatus.isShowingUrl) {
 					return (true);
 				}
@@ -141,25 +144,16 @@ class WebDisplayIntent extends IntentBase {
 		});
 
 		for (let agent of agents) {
-			if (this.state.urlChoices.length <= 0) {
-				this.state.urlChoices = this.createChoiceArray (this.state.urls);
-				if (this.state.urlChoices.length <= 0) {
-					break;
-				}
-			}
-
-			this.state.agentMap[agent.agentId] = this.updateTime + App.systemAgent.getRandomInteger (this.state.minItemDisplayDuration * 1000, this.state.maxItemDisplayDuration * 1000);
+			this.state.agentMap[agent.agentId] = this.updateTime + this.prng.getRandomInteger (this.state.minItemDisplayDuration * 1000, this.state.maxItemDisplayDuration * 1000);
 			if (this.state.isShuffle) {
-				curindex = this.getRandomChoice (this.state.urlChoices);
+				url = this.getRandomChoice (this.state.urls, this.state.urlChoices);
 			}
 			else {
-				curindex = this.state.urlChoices.shift ();
+				url = this.getSequentialChoice (this.state.urls, this.state.urlChoices);
 			}
-			if ((curindex < 0) || (curindex >= this.state.urls.length)) {
+			if (typeof url != "string") {
 				continue;
 			}
-
-			url = this.state.urls[curindex];
 			cmd = App.systemAgent.createCommand ("ShowWebUrl", SystemInterface.Constant.Monitor, { url: url }, App.AUTHORIZE_SECRET, this.authToken);
 			if (cmd == null) {
 				continue;
@@ -168,7 +162,7 @@ class WebDisplayIntent extends IntentBase {
 			this.lastCommandTimeMap[agent.agentId] = this.updateTime;
 			App.systemAgent.invokeAgentCommand (agent.urlHostname, agent.tcpPort1, SystemInterface.Constant.DefaultInvokePath, cmd, SystemInterface.CommandId.CommandResult, (err) => {
 				if (err != null) {
-					Log.warn (`${this.toString ()} failed to send ShowWebUrl command; err=${err}`);
+					Log.debug (`${this.toString ()} failed to send ShowWebUrl command; err=${err}`);
 				}
 			});
 		}

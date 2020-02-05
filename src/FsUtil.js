@@ -1,5 +1,5 @@
 /*
-* Copyright 2018-2019 Membrane Software <author@membranesoftware.com> https://membranesoftware.com
+* Copyright 2018-2020 Membrane Software <author@membranesoftware.com> https://membranesoftware.com
 *
 * Redistribution and use in source and binary forms, with or without
 * modification, are permitted provided that the following conditions are met:
@@ -40,7 +40,7 @@ const Log = require (App.SOURCE_DIRECTORY + "/Log");
 
 const FS_READ_BLOCK_SIZE = 65536; // bytes
 
-// Create a directory if it does not already exist, and invoke endCallback (err) when complete. If endCallback is not provided, instead return a promise that resolves if the operation succeeds or rejects if it doesn't.
+// Create a directory if it does not already exist, and invoke endCallback (err) when complete. If endCallback is not provided, instead return a promise that executes the operation.
 exports.createDirectory = function (path, endCallback) {
 	let execute = (executeCallback) => {
 		let dirStat, dirStatComplete, mkdirComplete;
@@ -202,7 +202,7 @@ exports.getSizeString = function (size) {
 	return (size + "B");
 };
 
-// Gather file stats for a path and invoke endCallback (err, stats) when complete. If endCallback is not provided, instead return a promise that resolves if the operation succeeds or rejects if it doesn't.
+// Gather file stats for a path and invoke endCallback (err, stats) when complete. If endCallback is not provided, instead return a promise that executes the operation.
 exports.statFile = function (path, endCallback) {
 	let execute = (executeCallback) => {
 		Fs.stat (path, executeCallback);
@@ -224,7 +224,7 @@ exports.statFile = function (path, endCallback) {
 	}
 };
 
-// Gather stats for all files in fileList and invoke endCallback (err) when complete. If statFunction is provided, invoke statFunction (filename, stats) for each file and generate an error if statFunction does not return true. If endCallback is not provided, instead return a promise that resolves if the operation succeeds or rejects if it doesn't.
+// Gather stats for all files in fileList and invoke endCallback (err) when complete. If statFunction is provided, invoke statFunction (filename, stats) for each file and generate an error if statFunction does not return true. If endCallback is not provided, instead return a promise that executes the operation.
 exports.statFiles = function (fileList, statFunction, endCallback) {
 	let execute = (executeCallback) => {
 		let statFile, statFilesComplete;
@@ -272,7 +272,7 @@ exports.statFiles = function (fileList, statFunction, endCallback) {
 	}
 };
 
-// Open a file for reading and invoke endCallback (err, fd) when complete. If endCallback is not provided, instead return a promise that resolves if the operation succeeds or rejects if it doesn't.
+// Open a file for reading and invoke endCallback (err, fd) when complete. If endCallback is not provided, instead return a promise that executes the operation.
 exports.openFile = function (path, endCallback) {
 	let execute = (executeCallback) => {
 		Fs.open (path, "r", 0, executeCallback);
@@ -294,7 +294,7 @@ exports.openFile = function (path, endCallback) {
 	}
 };
 
-// Write data to a file and invoke endCallback (err) when complete. If endCallback is not provided, instead return a promise that resolves if the operation succeeds or rejects if it doesn't.
+// Write data to a file and invoke endCallback (err) when complete. If endCallback is not provided, instead return a promise that executes the operation.
 exports.writeFile = function (filename, data, options, endCallback) {
 	let execute = (executeCallback) => {
 		Fs.writeFile (filename, data, options, executeCallback);
@@ -316,7 +316,7 @@ exports.writeFile = function (filename, data, options, endCallback) {
 	}
 };
 
-// Read data from a file and invoke dataCallback (lines, dataEndCallback) for each set of full lines encountered, then invoke endCallback (err) when complete. If endCallback is not provided, instead return a promise that resolves if the operation succeeds or rejects if it doesn't.
+// Read data from a file and invoke dataCallback (lines, dataEndCallback) for each set of full lines encountered, then invoke endCallback (err) when complete. If endCallback is not provided, instead return a promise that executes the operation.
 exports.readFileLines = function (filename, dataCallback, endCallback) {
 	let execute = (executeCallback) => {
 		let readfd, buffer, parsedata, openComplete, readComplete, endExecute;
@@ -396,7 +396,7 @@ exports.readFileLines = function (filename, dataCallback, endCallback) {
 	}
 };
 
-// Write a state object to a file and invoke endCallback (err) when complete. If endCallback is not provided, instead return a promise that resolves if the operation succeeds or rejects if it doesn't.
+// Write a state object to a file and invoke endCallback (err) when complete. If endCallback is not provided, instead return a promise that executes the operation.
 exports.writeStateFile = function (filename, state, endCallback) {
 	if (typeof endCallback == "function") {
 		exports.writeFile (filename, JSON.stringify (state), { "mode" : 0o600 }, endCallback);
@@ -406,7 +406,7 @@ exports.writeStateFile = function (filename, state, endCallback) {
 	}
 };
 
-// Read a previously written state object file and invoke endCallback (err, state) when complete. If endCallback is not provided, instead return a promise that resolves if the operation succeeds or rejects if it doesn't.
+// Read a previously written state object file and invoke endCallback (err, state) when complete. If endCallback is not provided, instead return a promise that executes the operation.
 exports.readStateFile = function (filename, endCallback) {
 	let execute = (executeCallback) => {
 		Fs.readFile (filename, readFileComplete);
@@ -449,7 +449,7 @@ exports.readStateFile = function (filename, endCallback) {
 	}
 };
 
-// Read all entries in the specified directory and invoke endCallback (err, files) when complete. If endCallback is not provided, instead return a promise that resolves if the operation succeeds or rejects if it doesn't.
+// Read all entries in the specified directory and invoke endCallback (err, files) when complete. If endCallback is not provided, instead return a promise that executes the operation.
 exports.readDirectory = function (directoryPath, endCallback) {
 	let execute = (executeCallback) => {
 		Fs.readdir (directoryPath, executeCallback);
@@ -649,7 +649,7 @@ exports.findFiles = function (directoryPath, callback) {
 	}
 };
 
-// Scan the specified directory path and recurse into all subdirectories to find available filenames. Invokes the provided callback when complete, with "err" (non-null if an error occurred) and "fileList" parameters (an array of filenames, or null if an error occurred). If endCallback is not provided, instead return a promise that resolves if the operation succeeds or rejects if it doesn't.
+// Scan the specified directory path and recurse into all subdirectories to find available filenames. Invokes the provided callback when complete, with "err" (non-null if an error occurred) and "fileList" parameters (an array of filenames, or null if an error occurred). If endCallback is not provided, instead return a promise that executes the operation.
 exports.findAllFiles = function (directoryPath, endCallback) {
 	let execute = (executeCallback) => {
 		let filelist;
@@ -687,7 +687,7 @@ exports.findAllFiles = function (directoryPath, endCallback) {
 	}
 };
 
-// Check if the named path exists as a regular file and invoke endCallback (err, exists) when complete. If endCallback is not provided, instead return a promise that resolves if the operation succeeds or rejects if it doesn't.
+// Check if the named path exists as a regular file and invoke endCallback (err, exists) when complete. If endCallback is not provided, instead return a promise that executes the operation.
 exports.fileExists = function (path, endCallback) {
 	let execute = (executeCallback) => {
 		Fs.stat (path, (err, stats) => {
@@ -743,7 +743,7 @@ exports.fileExistsSync = function (path) {
 	return ((stat != null) && stat.isFile ());
 };
 
-// Rename a file and invoke endCallback (err) when complete. If endCallback is not provided, instead return a promise that resolves if the operation succeeds or rejects if it doesn't.
+// Rename a file and invoke endCallback (err) when complete. If endCallback is not provided, instead return a promise that executes the operation.
 exports.renameFile = function (oldPath, newPath, endCallback) {
 	let execute = (executeCallback) => {
 		Fs.rename (oldPath, newPath, executeCallback);

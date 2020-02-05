@@ -1,5 +1,5 @@
 /*
-* Copyright 2018-2019 Membrane Software <author@membranesoftware.com> https://membranesoftware.com
+* Copyright 2018-2020 Membrane Software <author@membranesoftware.com> https://membranesoftware.com
 *
 * Redistribution and use in source and binary forms, with or without
 * modification, are permitted provided that the following conditions are met:
@@ -202,26 +202,18 @@ class MediaDisplayIntent extends IntentBase {
 
 	// Select a stream item and execute a play command on the provided target agent
 	playNextItem (agent) {
-		let curindex, item;
-
-		if (this.state.itemChoices.length <= 0) {
-			this.state.itemChoices = this.createChoiceArray (this.state.items);
-			if (this.state.itemChoices.length <= 0) {
-				return;
-			}
-		}
+		let item;
 
 		if (this.state.isShuffle) {
-			curindex = this.getRandomChoice (this.state.itemChoices);
+			item = this.getRandomChoice (this.state.items, this.state.itemChoices);
 		}
 		else {
-			curindex = this.state.itemChoices.shift ();
+			item = this.getSequentialChoice (this.state.items, this.state.itemChoices);
 		}
-		if ((curindex < 0) || (curindex >= this.state.items.length)) {
+		if (item == null) {
 			return;
 		}
 
-		item = this.state.items[curindex];
 		if (item.streamUrl != "") {
 			this.executePlayMedia (agent, item);
 		}
@@ -283,7 +275,7 @@ class MediaDisplayIntent extends IntentBase {
 		}
 		this.lastCommandTimeMap[agent.agentId] = this.updateTime;
 		if ((this.state.minItemDisplayDuration > 0) && (this.state.maxItemDisplayDuration > 0)) {
-			this.state.agentMap[agent.agentId] = this.updateTime + App.systemAgent.getRandomInteger (this.state.minItemDisplayDuration * 1000, this.state.maxItemDisplayDuration * 1000);
+			this.state.agentMap[agent.agentId] = this.updateTime + this.prng.getRandomInteger (this.state.minItemDisplayDuration * 1000, this.state.maxItemDisplayDuration * 1000);
 		}
 		App.systemAgent.invokeAgentCommand (agent.urlHostname, agent.tcpPort1, SystemInterface.Constant.DefaultInvokePath, cmd, SystemInterface.CommandId.CommandResult, (err) => {
 			if (err != null) {
@@ -313,7 +305,7 @@ class MediaDisplayIntent extends IntentBase {
 		}
 		this.lastCommandTimeMap[agent.agentId] = this.updateTime;
 		if ((this.state.minItemDisplayDuration > 0) && (this.state.maxItemDisplayDuration > 0)) {
-			this.state.agentMap[agent.agentId] = this.updateTime + App.systemAgent.getRandomInteger (this.state.minItemDisplayDuration * 1000, this.state.maxItemDisplayDuration * 1000);
+			this.state.agentMap[agent.agentId] = this.updateTime + this.prng.getRandomInteger (this.state.minItemDisplayDuration * 1000, this.state.maxItemDisplayDuration * 1000);
 		}
 		App.systemAgent.invokeAgentCommand (agent.urlHostname, agent.tcpPort1, SystemInterface.Constant.DefaultInvokePath, cmd, SystemInterface.CommandId.CommandResult, (err) => {
 			if (err != null) {
