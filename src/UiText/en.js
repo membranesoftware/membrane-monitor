@@ -29,6 +29,6 @@
 */
 "use strict";
 
-exports.appStartMessage = "is supported by donations from users like you. If you get utility and enjoyment from this application, please think about contributing money to support its development. Any amount helps! mbrn.tech/contribute";
-exports.getDiskSpaceTaskName = "Update storage space available";
-exports.cacheMediaStreamTaskName = "Cache stream";
+exports.AppStartMessage = "is supported by donations from users like you. If you get utility and enjoyment from this application, please think about contributing money to support its development. Any amount helps! mbrn.tech/contribute";
+exports.GetDiskSpaceTaskName = "Update storage space available";
+exports.CacheMediaStreamTaskName = "Cache stream";

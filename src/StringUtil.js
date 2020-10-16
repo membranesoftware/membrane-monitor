@@ -31,18 +31,64 @@
 
 "use strict";
 
-const App = global.App || { };
-
 // Return the provided string with a capitalized first letter
-exports.capitalized = function (str) {
-	let s;
+exports.capitalized = (str) => {
+	if (str.length <= 0) {
+		return (str);
+	}
+	if (str.length == 1) {
+		return (str.toUpperCase ());
+	}
+	return (str.substring (0, 1).toUpperCase () + str.substring (1));
+};
 
-	s = str;
-	if (s.length <= 0) {
-		return (s);
+// Return the hostname portion of an address string
+exports.parseAddressHostname = (str) => {
+	const pos = str.indexOf (":");
+	return ((pos >= 0) ? str.substring (0, pos) : str);
+};
+
+// Return a number parsed from the port portion of an address string, or the specified default if no port was found
+exports.parseAddressPort = (str, defaultPort) => {
+	const matches = str.match (/.*?:([0-9]+)$/);
+	if (! Array.isArray (matches)) {
+		return (defaultPort);
 	}
-	if (s.length == 1) {
-		return (s.toUpperCase ());
+	const port = +matches[1];
+	return ((! isNaN (port)) ? port : defaultPort);
+};
+
+// Return a formatted duration string generated from the provided number of milliseconds
+exports.getDurationString = (ms) => {
+	let duration, t, s;
+
+	duration = "";
+	t = ms;
+	t /= 1000;
+	if (t >= 86400) {
+		duration += `${Math.floor (t / 86400)}d `;
+		t %= 86400;
 	}
-	return (s.substring (0, 1).toUpperCase () + s.substring (1));
+
+	s = `${Math.floor (t / 3600)}`;
+	if (s.length < 2) {
+		s = `0${s}`;
+	}
+	duration += s;
+	t %= 3600;
+
+	s = `${Math.floor (t / 60)}`;
+	if (s.length < 2) {
+		s = `0${s}`;
+	}
+	duration += `:${s}`;
+	t %= 60;
+
+	s = `${Math.floor (t)}`;
+	if (s.length < 2) {
+		s = `0${s}`;
+	}
+	duration += `:${s}`;
+
+	return (duration);
 };

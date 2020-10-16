@@ -33,16 +33,16 @@ const App = global.App || { };
 const Fs = require ("fs");
 const Path = require ("path");
 const Url = require ("url");
-const Log = require (App.SOURCE_DIRECTORY + "/Log");
-const SystemInterface = require (App.SOURCE_DIRECTORY + "/SystemInterface");
-const FsUtil = require (App.SOURCE_DIRECTORY + "/FsUtil");
-const HlsIndexParser = require (App.SOURCE_DIRECTORY + "/HlsIndexParser");
-const TaskBase = require (App.SOURCE_DIRECTORY + "/Task/TaskBase");
+const Log = require (Path.join (App.SOURCE_DIRECTORY, "Log"));
+const SystemInterface = require (Path.join (App.SOURCE_DIRECTORY, "SystemInterface"));
+const FsUtil = require (Path.join (App.SOURCE_DIRECTORY, "FsUtil"));
+const HlsIndexParser = require (Path.join (App.SOURCE_DIRECTORY, "HlsIndexParser"));
+const TaskBase = require (Path.join (App.SOURCE_DIRECTORY, "Task", "TaskBase"));
 
 class CacheMediaStream extends TaskBase {
 	constructor () {
 		super ();
-		this.name = App.uiText.getText ("cacheMediaStreamTaskName");
+		this.name = App.uiText.getText ("CacheMediaStreamTaskName");
 		this.resultObjectType = "StreamItem";
 
 		this.configureParams = [
@@ -133,25 +133,23 @@ class CacheMediaStream extends TaskBase {
 		FsUtil.createDirectory (this.configureMap.dataPath).then (() => {
 			return (FsUtil.createDirectory (this.streamDataPath));
 		}).then (() => {
-			return (FsUtil.createDirectory (Path.join (this.streamDataPath, App.STREAM_HLS_PATH)));
+			return (FsUtil.createDirectory (Path.join (this.streamDataPath, App.StreamHlsPath)));
 		}).then (() => {
-			return (FsUtil.createDirectory (Path.join (this.streamDataPath, App.STREAM_THUMBNAIL_PATH)));
+			return (FsUtil.createDirectory (Path.join (this.streamDataPath, App.StreamThumbnailPath)));
 		}).then (() => {
-			let url, playcmd;
-
-			url = Url.parse (this.configureMap.streamUrl);
+			const url = Url.parse (this.configureMap.streamUrl);
 			if (url == null) {
 				return (Promise.reject (Error ("Invalid stream URL")));
 			}
-			this.baseUrl = url.protocol + "/" + "/" + url.hostname + ":" + url.port;
+			this.baseUrl = `${url.protocol}${App.DoubleSlash}${url.hostname}:${url.port}`;
 
-			playcmd = App.systemAgent.createCommand ("GetHlsManifest", SystemInterface.Constant.Stream, {
+			const playcmd = App.systemAgent.createCommand ("GetHlsManifest", SystemInterface.Constant.Stream, {
 				streamId: this.configureMap.streamId
 			});
 			if (playcmd == null) {
 				return (Promise.reject (Error ("Failed to create GetHlsManifest command")));
 			}
-			this.manifestUrl = this.configureMap.streamUrl + "?" + SystemInterface.Constant.UrlQueryParameter + "=" + encodeURIComponent (JSON.stringify (playcmd));
+			this.manifestUrl = `${this.configureMap.streamUrl}?${SystemInterface.Constant.UrlQueryParameter}=${encodeURIComponent (JSON.stringify (playcmd))}`;
 
 			return (App.systemAgent.fetchUrlData (this.manifestUrl));
 		}).then ((urlData) => {
@@ -170,16 +168,16 @@ class CacheMediaStream extends TaskBase {
 	// Return a promise that fetches all segment files referenced in the provided HLS index data and stores the resulting base index file
 	fetchSegmentFiles (hlsIndexData) {
 		return (new Promise ((resolve, reject) => {
-			let hls, recordparams, segmenturls, segmentindex, fetchNextSegment, fetchSegmentComplete, statSegmentComplete, fetchThumbnailComplete, statThumbnailComplete, writeRecordFile, writeRecordFileComplete;
+			let segmentindex;
 
-			hls = HlsIndexParser.parse (hlsIndexData);
+			const hls = HlsIndexParser.parse (hlsIndexData);
 			if ((hls == null) || (hls.segmentCount <= 0)) {
 				reject (Error ("Failed to parse stream index data"));
 				return;
 			}
 
 			this.progressPercentDelta = (99 / hls.segmentCount);
-			recordparams = {
+			const recordparams = {
 				id: this.cacheStreamId,
 				name: this.configureMap.streamName,
 				sourceId: this.configureMap.streamId,
@@ -195,11 +193,11 @@ class CacheMediaStream extends TaskBase {
 				segmentLengths: hls.segmentLengths,
 				segmentPositions: hls.segmentPositions
 			};
-			segmenturls = [ ];
+			const segmenturls = [ ];
 			segmentindex = 0;
-			for (let file of hls.segmentFilenames) {
+			for (const file of hls.segmentFilenames) {
 				segmenturls.push (file);
-				recordparams.segmentFilenames.push (segmentindex + ".ts");
+				recordparams.segmentFilenames.push (`${segmentindex}.ts`);
 				++segmentindex;
 			}
 
@@ -209,17 +207,16 @@ class CacheMediaStream extends TaskBase {
 				segmentindex = -1;
 				fetchNextSegment ();
 			}, 0);
-
-			fetchNextSegment = () => {
+			const fetchNextSegment = () => {
 				++segmentindex;
 				if (segmentindex >= segmenturls.length) {
 					writeRecordFile ();
 					return;
 				}
-				App.systemAgent.fetchUrlFile (this.baseUrl + segmenturls[segmentindex], Path.join (this.streamDataPath, App.STREAM_HLS_PATH), segmentindex + ".ts", fetchSegmentComplete);
-			};
 
-			fetchSegmentComplete = (err, destFilename) => {
+				App.systemAgent.fetchUrlFile (this.baseUrl + segmenturls[segmentindex], Path.join (this.streamDataPath, App.StreamHlsPath), `${segmentindex}.ts`, fetchSegmentComplete);
+			};
+			const fetchSegmentComplete = (err, destFilename) => {
 				if (err != null) {
 					reject (err);
 					return;
@@ -227,10 +224,7 @@ class CacheMediaStream extends TaskBase {
 
 				Fs.stat (destFilename, statSegmentComplete);
 			};
-
-			statSegmentComplete = (err, stats) => {
-				let url, cmd;
-
+			const statSegmentComplete = (err, stats) => {
 				if (err != null) {
 					reject (err);
 					return;
@@ -239,7 +233,7 @@ class CacheMediaStream extends TaskBase {
 					recordparams.size += stats.size;
 				}
 
-				cmd = App.systemAgent.createCommand ("GetThumbnailImage", SystemInterface.Constant.Stream, {
+				const cmd = App.systemAgent.createCommand ("GetThumbnailImage", SystemInterface.Constant.Stream, {
 					id: this.configureMap.streamId,
 					thumbnailIndex: segmentindex
 				});
@@ -247,11 +241,10 @@ class CacheMediaStream extends TaskBase {
 					reject (Error ("Failed to create GetThumbnailImage command"));
 					return;
 				}
-				url = this.configureMap.thumbnailUrl + "?" + SystemInterface.Constant.UrlQueryParameter + "=" + encodeURIComponent (JSON.stringify (cmd));
-				App.systemAgent.fetchUrlFile (url, Path.join (this.streamDataPath, App.STREAM_THUMBNAIL_PATH), segmentindex + ".jpg", fetchThumbnailComplete);
+				const url = `${this.configureMap.thumbnailUrl}?${SystemInterface.Constant.UrlQueryParameter}=${encodeURIComponent (JSON.stringify (cmd))}`;
+				App.systemAgent.fetchUrlFile (url, Path.join (this.streamDataPath, App.StreamThumbnailPath), `${segmentindex}.jpg`, fetchThumbnailComplete);
 			};
-
-			fetchThumbnailComplete = (err, destFilename) => {
+			const fetchThumbnailComplete = (err, destFilename) => {
 				if (err != null) {
 					reject (err);
 					return;
@@ -259,8 +252,7 @@ class CacheMediaStream extends TaskBase {
 
 				Fs.stat (destFilename, statThumbnailComplete);
 			};
-
-			statThumbnailComplete = (err, stats) => {
+			const statThumbnailComplete = (err, stats) => {
 				if (err != null) {
 					reject (err);
 					return;
@@ -272,25 +264,17 @@ class CacheMediaStream extends TaskBase {
 				this.addPercentComplete (this.progressPercentDelta);
 				fetchNextSegment ();
 			};
-
-			writeRecordFile = () => {
-				let record;
-
-				if (err != null) {
-					reject (err);
-					return;
-				}
-				record = App.systemAgent.createCommand ("StreamItem", SystemInterface.Constant.Stream, recordparams);
+			const writeRecordFile = () => {
+				const record = App.systemAgent.createCommand ("StreamItem", SystemInterface.Constant.Stream, recordparams);
 				if (record == null) {
 					reject (Error ("Failed to create StreamItem record"));
 					return;
 				}
 
 				this.resultObject = record.params;
-				FsUtil.writeFile (Path.join (this.streamDataPath, App.STREAM_RECORD_FILENAME), JSON.stringify (record), null, writeRecordFileComplete);
+				FsUtil.writeFile (Path.join (this.streamDataPath, App.StreamRecordFilename), JSON.stringify (record), null, writeRecordFileComplete);
 			};
-
-			writeRecordFileComplete = (err) => {
+			const writeRecordFileComplete = (err) => {
 				if (err != null) {
 					reject (err);
 					return;
@@ -306,9 +290,9 @@ class CacheMediaStream extends TaskBase {
 		if (this.isSuccess && (! this.isCancelled)) {
 			return;
 		}
+
 		FsUtil.removeDirectory (this.streamDataPath, (err) => {
 		});
 	}
 }
-
 module.exports = CacheMediaStream;

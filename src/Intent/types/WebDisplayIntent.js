@@ -30,15 +30,13 @@
 "use strict";
 
 const App = global.App || { };
-const Result = require (App.SOURCE_DIRECTORY + "/Result");
-const Log = require (App.SOURCE_DIRECTORY + "/Log");
-const SystemInterface = require (App.SOURCE_DIRECTORY + "/SystemInterface");
-const Agent = require (App.SOURCE_DIRECTORY + "/Intent/Agent");
-const AgentControl = require (App.SOURCE_DIRECTORY + "/Intent/AgentControl");
-const IntentBase = require (App.SOURCE_DIRECTORY + "/Intent/IntentBase");
+const Path = require ("path");
+const Result = require (Path.join (App.SOURCE_DIRECTORY, "Result"));
+const Log = require (Path.join (App.SOURCE_DIRECTORY, "Log"));
+const SystemInterface = require (Path.join (App.SOURCE_DIRECTORY, "SystemInterface"));
+const IntentBase = require (Path.join (App.SOURCE_DIRECTORY, "Intent", "IntentBase"));
 
-const AGENT_TIMEOUT_PERIOD = 60000; // milliseconds
-const AGENT_COMMAND_WAIT_PERIOD = 5000; // milliseconds
+const AgentCommandWaitPeriod = 7000; // milliseconds
 
 class WebDisplayIntent extends IntentBase {
 	constructor () {
@@ -46,6 +44,7 @@ class WebDisplayIntent extends IntentBase {
 		this.name = "WebDisplayIntent";
 		this.displayName = "Track websites";
 		this.stateType = "WebDisplayIntentState";
+		this.isDisplayIntent = true;
 	}
 
 	// Configure the intent's state using values in the provided params object and return a Result value
@@ -67,33 +66,11 @@ class WebDisplayIntent extends IntentBase {
 			}
 		}
 
-		return (Result.SUCCESS);
+		return (Result.Success);
 	}
 
 	// Perform actions appropriate when the intent becomes active
 	doStart () {
-		this.lastCommandTimeMap = { };
-		if (App.AUTHORIZE_SECRET == "") {
-			this.authToken = "";
-		}
-		else {
-			this.authToken = App.systemAgent.accessControl.createSession ();
-			App.systemAgent.accessControl.setSessionSustained (this.authToken, true);
-		}
-	}
-
-	// Perform actions appropriate when the intent becomes inactive
-	doStop () {
-		if (this.authToken != "") {
-			App.systemAgent.accessControl.setSessionSustained (this.authToken, false);
-			this.authToken = "";
-		}
-	}
-
-	// Perform actions appropriate for the current state of the application
-	doUpdate () {
-		let agents, cmd, url;
-
 		if (! Array.isArray (this.state.urls)) {
 			this.state.urls = [ ];
 		}
@@ -103,10 +80,6 @@ class WebDisplayIntent extends IntentBase {
 		if (typeof this.state.isShuffle != "boolean") {
 			this.state.isShuffle = false;
 		}
-		if ((typeof this.state.agentMap != "object") || (this.state.agentMap == null)) {
-			// A map of agent ID values to timestamp values, indicating when each agent's next display command should be invoked
-			this.state.agentMap = { };
-		}
 		if (typeof this.state.minItemDisplayDuration != "number") {
 			this.state.minItemDisplayDuration = 300;
 		}
@@ -114,57 +87,69 @@ class WebDisplayIntent extends IntentBase {
 			this.state.maxItemDisplayDuration = 900;
 		}
 
-		agents = this.findAgents ((a) => {
-			let t;
+		this.lastCommandTime = 0;
+		this.nextCommandTime = 0;
+	}
 
-			if ((this.updateTime - a.lastStatusTime) >= AGENT_TIMEOUT_PERIOD) {
-				return (false);
-			}
+	// Perform actions appropriate for the current state of the application
+	doUpdate () {
+		let show, url;
 
-			t = this.lastCommandTimeMap[a.agentId];
-			if ((typeof t == "number") && ((t + AGENT_COMMAND_WAIT_PERIOD) > this.updateTime)) {
-				return (false);
-			}
+		if (this.state.urls.length <= 0) {
+			return;
+		}
+		if (! this.isDisplayConditionActive) {
+			return;
+		}
+		if (! this.hasTimeElapsed (this.lastCommandTime, AgentCommandWaitPeriod)) {
+			return;
+		}
 
-			if ((typeof a.lastStatus.monitorServerStatus == "object") && (a.lastStatus.monitorServerStatus != null)) {
-				if (! a.lastStatus.monitorServerStatus.isShowUrlAvailable) {
-					return (false);
+		const agent = App.systemAgent.agentControl.getLocalAgent ();
+		const monitorstatus = agent.lastStatus.monitorServerStatus;
+		if ((typeof monitorstatus != "object") || (monitorstatus == null)) {
+			return;
+		}
+		if (! monitorstatus.isShowUrlAvailable) {
+			return;
+		}
+
+		show = false;
+		if (monitorstatus.displayState !== SystemInterface.Constant.ShowUrlDisplayState) {
+			show = true;
+		}
+		if (! show) {
+			if ((this.state.minItemDisplayDuration > 0) && (this.state.maxItemDisplayDuration > 0)) {
+				if (this.updateTime >= this.nextCommandTime) {
+					show = true;
 				}
-				if (! a.lastStatus.monitorServerStatus.isShowingUrl) {
-					return (true);
-				}
 			}
+		}
+		if (! show) {
+			return;
+		}
 
-			t = this.state.agentMap[a.agentId];
-			if ((typeof t == "number") && (this.updateTime < t)) {
-				return (false);
-			}
+		if (this.state.isShuffle) {
+			url = this.getRandomChoice (this.state.urls, this.state.urlChoices);
+		}
+		else {
+			url = this.getSequentialChoice (this.state.urls, this.state.urlChoices);
+		}
+		if (typeof url != "string") {
+			return;
+		}
 
-			return (true);
+		const cmd = App.systemAgent.createCommand ("ShowWebUrl", SystemInterface.Constant.Monitor, { url: url });
+		if (cmd == null) {
+			return;
+		}
+		App.systemAgent.agentControl.invokeCommand (App.systemAgent.agentId, SystemInterface.Constant.DefaultInvokePath, cmd, SystemInterface.CommandId.CommandResult).catch ((err) => {
+			Log.debug (`${this.toString ()} failed to invoke ShowWebUrl; err=${err}`);
 		});
 
-		for (let agent of agents) {
-			this.state.agentMap[agent.agentId] = this.updateTime + this.prng.getRandomInteger (this.state.minItemDisplayDuration * 1000, this.state.maxItemDisplayDuration * 1000);
-			if (this.state.isShuffle) {
-				url = this.getRandomChoice (this.state.urls, this.state.urlChoices);
-			}
-			else {
-				url = this.getSequentialChoice (this.state.urls, this.state.urlChoices);
-			}
-			if (typeof url != "string") {
-				continue;
-			}
-			cmd = App.systemAgent.createCommand ("ShowWebUrl", SystemInterface.Constant.Monitor, { url: url }, App.AUTHORIZE_SECRET, this.authToken);
-			if (cmd == null) {
-				continue;
-			}
-
-			this.lastCommandTimeMap[agent.agentId] = this.updateTime;
-			App.systemAgent.invokeAgentCommand (agent.urlHostname, agent.tcpPort1, SystemInterface.Constant.DefaultInvokePath, cmd, SystemInterface.CommandId.CommandResult, (err) => {
-				if (err != null) {
-					Log.debug (`${this.toString ()} failed to send ShowWebUrl command; err=${err}`);
-				}
-			});
+		this.lastCommandTime = this.updateTime;
+		if ((this.state.minItemDisplayDuration > 0) && (this.state.maxItemDisplayDuration > 0)) {
+			this.nextCommandTime = this.updateTime + this.prng.getRandomInteger (this.state.minItemDisplayDuration * 1000, this.state.maxItemDisplayDuration * 1000);
 		}
 	}
 }

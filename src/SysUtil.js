@@ -31,15 +31,13 @@
 
 "use strict";
 
-const App = global.App || { };
-
-// Return an item from a map, or undefined if the item wasn't found. If createFn is a function that returns an object, use it to create a new map item if not found.
-exports.getMapItem = function (map, key, createFn) {
+// Return an item from a map, or undefined if the item wasn't found. If createFn is a function that returns an object, use it to create a new map item for any nonexistent key.
+exports.getMapItem = (map, key, createFn) => {
 	let item;
 
 	item = map[key];
 	if (item === undefined) {
-		if (typeof createFn == 'function') {
+		if (typeof createFn == "function") {
 			item = createFn ();
 			map[key] = item;
 		}

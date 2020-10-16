@@ -31,20 +31,16 @@
 
 "use strict";
 
-const App = global.App || { };
-
 class Prng {
 	constructor () {
 	}
 
 	// Return a randomly selected integer within the provided inclusive range
 	getRandomInteger (min, max) {
-		let diff;
-
 		// TODO: Provide capability for instances of this class to store a seed value (currently using the system seed for all instances)
 		min = Math.floor (min);
 		max = Math.floor (max);
-		diff = max - min;
+		const diff = max - min;
 		if (diff <= 0) {
 			return (Math.floor (min));
 		}

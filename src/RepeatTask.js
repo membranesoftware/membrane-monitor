@@ -31,9 +31,6 @@
 
 "use strict";
 
-const App = global.App || { };
-const Log = require (App.SOURCE_DIRECTORY + '/Log');
-
 class RepeatTask {
 	constructor () {
 		this.taskFunction = (callback) => {
@@ -60,7 +57,7 @@ class RepeatTask {
 		this.isSuspended = false;
 		this.taskFunction = taskFunction;
 		this.minIntervalPeriod = minIntervalPeriod;
-		if (typeof maxIntervalPeriod == 'number') {
+		if (typeof maxIntervalPeriod == "number") {
 			this.maxIntervalPeriod = maxIntervalPeriod;
 		}
 		else {
@@ -74,8 +71,6 @@ class RepeatTask {
 
 	// Execute the task
 	execute () {
-		let taskFunctionComplete;
-
 		if (this.isExecuting) {
 			return;
 		}
@@ -88,7 +83,7 @@ class RepeatTask {
 		this.isExecuting = true;
 		this.nextRepeatPeriod = 0;
 
-		taskFunctionComplete = () => {
+		const taskFunctionComplete = () => {
 			let delay;
 
 			this.isExecuting = false;
@@ -109,7 +104,6 @@ class RepeatTask {
 				}, delay);
 			}
 		};
-
 		this.taskFunction (taskFunctionComplete, this);
 	}
 

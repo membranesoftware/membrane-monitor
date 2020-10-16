@@ -32,51 +32,35 @@
 "use strict";
 
 const App = global.App || { };
+const Path = require ("path");
 const UuidV4 = require ("uuid/v4");
-const Result = require (App.SOURCE_DIRECTORY + "/Result");
-const Log = require (App.SOURCE_DIRECTORY + "/Log");
-const SystemInterface = require (App.SOURCE_DIRECTORY + "/SystemInterface");
-const Prng = require (App.SOURCE_DIRECTORY + "/Prng");
-const AgentControl = require (App.SOURCE_DIRECTORY + "/Intent/AgentControl");
-
-const UPDATE_LOG_PERIOD = 120000; // milliseconds
+const Result = require (Path.join (App.SOURCE_DIRECTORY, "Result"));
+const Log = require (Path.join (App.SOURCE_DIRECTORY, "Log"));
+const SystemInterface = require (Path.join (App.SOURCE_DIRECTORY, "SystemInterface"));
+const Prng = require (Path.join (App.SOURCE_DIRECTORY, "Prng"));
 
 class IntentBase {
 	constructor () {
-		// Set this AgentControl object to provide the intent with agent visibility
-		this.agentControl = null;
-
-		// Set this value to specify the intent's ID (a UUID string)
+		// Read-write data members
 		this.id = "00000000-0000-0000-0000-000000000000";
-
-		// Set this value to specify the intent's name
 		this.name = "Intent";
-
-		// Set this value to specify the intent's group name
 		this.groupName = "";
-
-		// Set this value to specify the intent's display name
 		this.displayName = "Job";
-
-		// Set this value to specify whether the intent should be active. If inactive, the intent does not execute its update loop.
 		this.isActive = true;
-
-		// Set this value to a command ID that should be used for configuring the intent with the configureFromCommand method
 		this.configureCommandId = -1;
-
-		// An object used for holding persistent state associated with the intent, to be written as a record in the data store. Note that a MongoDB data store limits records to 16MB in size; intents should take care to keep state data below that maximum.
+		this.conditions = [ ];
 		this.state = { };
-
-		// Set this value to a SystemInterface type that should be applied for parsing the state object
 		this.stateType = "";
-
-		// This value holds the current time during update calls
 		this.updateTime = 0;
-
-		// Set values in this map for inclusion in status report strings
 		this.statusMap = { };
+		this.conditionMap = { };
+		this.isDisplayIntent = false;
 
 		this.prng = new Prng ();
+
+		this.lastDisplayConditionActiveTime = 0;
+		this.lastDisplayConditionInactiveTime = 0;
+		this.isDisplayConditionActive = false;
 	}
 
 	// Configure the intent's state using values in the provided params object. Returns a Result value.
@@ -90,16 +74,16 @@ class IntentBase {
 	// Configure the intent's state using values in the provided params object and return a Result value. Subclasses are expected to implement this method.
 	doConfigure (configParams) {
 		// Default implementation does nothing
-		return (Result.SUCCESS);
+		return (Result.Success);
 	}
 
 	// Configure the intent's state using the provided command and return a Result value.
 	configureFromCommand (cmdInv) {
 		if (this.configureCommandId < 0) {
-			return (Result.ERROR_UNKNOWN_TYPE);
+			return (Result.UnknownTypeError);
 		}
 		if (cmdInv.command != this.configureCommandId) {
-			return (Result.ERROR_INVALID_PARAMS);
+			return (Result.InvalidParamsError);
 		}
 
 		return (this.configure (cmdInv.params));
@@ -107,18 +91,18 @@ class IntentBase {
 
 	// Return a string description of the intent
 	toString () {
-		let s, keys, i;
+		let s;
 
-		s = "<Intent id=" + this.id + " name=" + this.name;
+		s = `<Intent id=${this.id} name=${this.name} displayName="${this.displayName}"`;
 		if (this.groupName != "") {
-			s += " groupName=" + this.groupName;
+			s += ` groupName=${this.groupName}`;
 		}
-		s += " isActive=" + this.isActive;
-		keys = Object.keys (this.statusMap);
+		s += ` isActive=${this.isActive} isDisplayConditionActive=${this.isDisplayConditionActive}`;
+		const keys = Object.keys (this.statusMap);
 		if (keys.length > 0) {
 			keys.sort ();
-			for (i = 0; i < keys.length; ++i) {
-				s += " " + keys[i] + "=\"" + this.statusMap[keys[i]] + "\"";
+			for (let i = 0; i < keys.length; ++i) {
+				s += ` ${keys[i]}="${this.statusMap[keys[i]]}"`;
 			}
 		}
 		s += ">";
@@ -128,27 +112,30 @@ class IntentBase {
 
 	// Return an object containing fields from the intent, suitable for use as parameters in an IntentState command
 	getIntentState () {
-		let state;
-
-		if (this.stateType == "") {
-			state = this.state;
-		}
-		else {
-			state = SystemInterface.parseTypeObject (this.stateType, this.state);
-			if (SystemInterface.isError (state)) {
-				Log.warn (`Failed to store intent state; name=${this.name} stateType=${this.stateType} err=${state}`);
-				state = { };
-			}
-		}
-
-		return ({
+		const result = {
 			id: this.id,
 			name: this.name,
 			groupName: this.groupName,
 			displayName: this.displayName,
-			isActive: this.isActive,
-			state: state
-		});
+			isActive: this.isActive
+		};
+
+		if (this.conditions.length > 0) {
+			result.conditions = this.conditions;
+		}
+
+		if (this.stateType == "") {
+			result.state = this.state;
+		}
+		else {
+			result.state = SystemInterface.parseTypeObject (this.stateType, this.state);
+			if (SystemInterface.isError (result.state)) {
+				Log.warn (`Failed to store intent state; name=${this.name} stateType=${this.stateType} err=${result.state}`);
+				result.state = { };
+			}
+		}
+
+		return (result);
 	}
 
 	// Reset fields in the intent using values from the provided IntentState params object
@@ -160,6 +147,11 @@ class IntentBase {
 		this.groupName = intentState.groupName;
 		this.displayName = intentState.displayName;
 		this.isActive = intentState.isActive;
+
+		this.conditions = [ ];
+		if (Array.isArray (intentState.conditions)) {
+			this.conditions = intentState.conditions;
+		}
 
 		if (this.stateType == "") {
 			this.state = intentState.state;
@@ -182,20 +174,62 @@ class IntentBase {
 		}
 	}
 
+	// Return a map of condition names to priority values, as computed from current state matched against configured conditions
+	matchConditions () {
+		const result = { };
+
+		if (this.isDisplayIntent) {
+			result[SystemInterface.Constant.DisplayCondition] = 0;
+			for (const condition of this.conditions) {
+				if (this.matchMonitorCondition (condition)) {
+					result[condition.name] = condition.priority;
+				}
+			}
+		}
+
+		const merge = this.doMatchConditions ();
+		for (const i in merge) {
+			result[i] = merge[i];
+		}
+		return (result);
+	}
+
+	// Return a subclass-specific map of condition names to priority values, as computed from current state matched against configured conditions
+	doMatchConditions () {
+		// Default implementation returns no matches
+		return ({ });
+	}
+
+	// Return a boolean value indicating if conditionMap indicates possession of the named condition
+	getCondition (conditionName) {
+		return (this.conditionMap[conditionName] === this.id);
+	}
+
 	// Perform actions appropriate for the current state of the application
 	update () {
-		let now;
-
 		if (! this.isActive) {
 			return;
 		}
 
-		now = new Date ().getTime ();
-		this.updateTime = now;
+		if (this.isDisplayIntent) {
+			if (this.getCondition (SystemInterface.Constant.DisplayCondition)) {
+				if (! this.isDisplayConditionActive) {
+					this.isDisplayConditionActive = true;
+					this.lastDisplayConditionActiveTime = this.updateTime;
+				}
+			}
+			else {
+				if (this.isDisplayConditionActive) {
+					this.isDisplayConditionActive = false;
+					this.lastDisplayConditionInactiveTime = this.updateTime;
+				}
+			}
+		}
+
 		this.doUpdate ();
 	}
 
-	// Perform actions appropriate for the current state of the application. Subclasses are expected to implement this method.
+	// Perform subclass-specific actions appropriate for the current state of the application
 	doUpdate () {
 		// Default implementation does nothing
 	}
@@ -224,11 +258,8 @@ class IntentBase {
 
 	// Return an object containing a command with the default agent prefix and the provided parameters, or null if the command could not be validated, in which case an error log message is generated
 	createCommand (commandName, commandType, commandParams) {
-		let cmd;
-
-		cmd = SystemInterface.createCommand (App.systemAgent.getCommandPrefix (), commandName, commandType, commandParams);
+		const cmd = SystemInterface.createCommand (App.systemAgent.getCommandPrefix (), commandName, commandType, commandParams);
 		if (SystemInterface.isError (cmd)) {
-			Log.err (`${this.toString ()} failed to create command invocation; commandName=${commandName} err=${cmd}`);
 			return (null);
 		}
 
@@ -237,9 +268,7 @@ class IntentBase {
 
 	// Return a boolean value indicating if the specified time period has elapsed, relative to the intent's update time. startTime and period are both measured in milliseconds.
 	hasTimeElapsed (startTime, period) {
-		let diff;
-
-		diff = this.updateTime - startTime;
+		const diff = this.updateTime - startTime;
 		return (diff >= period);
 	}
 
@@ -254,7 +283,7 @@ class IntentBase {
 			return (false);
 		}
 
-		for (let i of obj) {
+		for (const i of obj) {
 			if (typeof i != "string") {
 				return (false);
 			}
@@ -265,30 +294,24 @@ class IntentBase {
 
 	// Suspend all items in the provided map of RepeatTasks items
 	suspendTasks (taskMap) {
-		let i, task;
-
-		for (i in taskMap) {
-			task = taskMap[i];
+		for (const i in taskMap) {
+			const task = taskMap[i];
 			task.suspendRepeat ();
 		}
 	}
 
 	// Resume all items in the provided map of RepeatTasks items
 	resumeTasks (taskMap) {
-		let i, task;
-
-		for (i in taskMap) {
-			task = taskMap[i];
+		for (const i in taskMap) {
+			const task = taskMap[i];
 			task.setNextRepeat (0);
 		}
 	}
 
 	// Return a newly created array with the same contents as the provided source array
 	copyArray (sourceArray) {
-		let a, i;
-
-		a = [ ];
-		for (i = 0; i < sourceArray.length; ++i) {
+		const a = [ ];
+		for (let i = 0; i < sourceArray.length; ++i) {
 			a.push (sourceArray[i]);
 		}
 		return (a);
@@ -296,8 +319,6 @@ class IntentBase {
 
 	// Choose the next sequential item from itemArray. To track the chosen item, update choiceArray (expected to be an empty array for the first call). Returns the chosen item, or null if no items were available.
 	getSequentialChoice (itemArray, choiceArray) {
-		let result;
-
 		if ((! Array.isArray (itemArray)) || (itemArray.length <= 0)) {
 			return (null);
 		}
@@ -308,7 +329,7 @@ class IntentBase {
 		if (choiceArray.length <= 0) {
 			this.populateChoiceArray (choiceArray, itemArray.length);
 		}
-		result = itemArray[choiceArray.shift ()];
+		const result = itemArray[choiceArray.shift ()];
 		if (choiceArray.length <= 0) {
 			this.populateChoiceArray (choiceArray, itemArray.length);
 		}
@@ -318,8 +339,6 @@ class IntentBase {
 
 	// Choose an item at random from itemArray. To track the chosen item, update choiceArray (expected to be an empty array for the first call). Returns the chosen item, or null if no items were available.
 	getRandomChoice (itemArray, choiceArray) {
-		let index, result;
-
 		if ((! Array.isArray (itemArray)) || (itemArray.length <= 0)) {
 			return (null);
 		}
@@ -330,8 +349,8 @@ class IntentBase {
 		if (choiceArray.length <= 0) {
 			this.populateChoiceArray (choiceArray, itemArray.length, true);
 		}
-		index = choiceArray.shift ();
-		result = itemArray[index];
+		const index = choiceArray.shift ();
+		const result = itemArray[index];
 		if (choiceArray.length <= 0) {
 			this.populateChoiceArray (choiceArray, itemArray.length, true, index);
 		}
@@ -341,7 +360,7 @@ class IntentBase {
 
 	// Add index items to choiceArray as needed to track a new choice run, optionally shuffling the choices as they are added. If isShuffle is true and firstExcludeChoice is provided, ensure that the first populated choice item does not match that value.
 	populateChoiceArray (choiceArray, choiceCount, isShuffle, firstExcludeChoice) {
-		let choices, pos;
+		let pos;
 
 		if (isShuffle !== true) {
 			for (let i = 0; i < choiceCount; ++i) {
@@ -350,7 +369,7 @@ class IntentBase {
 			return;
 		}
 
-		choices = [ ];
+		const choices = [ ];
 		for (let i = 0; i < choiceCount; ++i) {
 			choices.push (i);
 		}
@@ -369,13 +388,47 @@ class IntentBase {
 		}
 	}
 
-	// Return an array containing contacted agents that cause the provided predicate function to generate a true value
-	findAgents (matchFunction) {
-		if (this.agentControl == null) {
-			return ([ ]);
+	// Return a boolean value indicating if intent state matches fields from the provided MonitorCondition object
+	matchMonitorCondition (condition) {
+		let result, found;
+
+		result = false;
+
+		if (Array.isArray (condition.clockTime)) {
+			found = false;
+			for (const item of condition.clockTime) {
+				const date = new Date (this.updateTime);
+				const m = (date.getHours () * 60) + date.getMinutes ();
+
+				if ((m >= ((item.startHour * 60) + item.startMinute)) && (m <= ((item.endHour * 60) + item.endMinute))) {
+					if ((! Array.isArray (item.weekdays)) || item.weekdays.includes (date.getDay ())) {
+						found = true;
+						break;
+					}
+				}
+			}
+			if (! found) {
+				return (false);
+			}
+
+			result = true;
 		}
-		return (this.agentControl.findAgents (matchFunction));
+		if (typeof condition.activeTime == "number") {
+			if ((this.lastDisplayConditionActiveTime > 0) && this.isDisplayConditionActive && this.hasTimeElapsed (this.lastDisplayConditionActiveTime, condition.activeTime)) {
+				return (false);
+			}
+
+			result = true;
+		}
+		if (typeof condition.idleTime == "number") {
+			if ((this.lastDisplayConditionInactiveTime > 0) && (! this.isDisplayConditionActive) && (! this.hasTimeElapsed (this.lastDisplayConditionInactiveTime, condition.idleTime))) {
+				return (false);
+			}
+
+			result = true;
+		}
+
+		return (result);
 	}
 }
-
 module.exports = IntentBase;

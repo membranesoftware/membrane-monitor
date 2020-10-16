@@ -33,9 +33,10 @@
 
 const App = global.App || { };
 const ChildProcess = require ("child_process");
-const Log = require (App.SOURCE_DIRECTORY + "/Log");
+const Path = require ("path");
+const Log = require (Path.join (App.SOURCE_DIRECTORY, "Log"));
 
-const STOP_SIGNAL_REPEAT_DELAY = 4800; // milliseconds
+const StopSignalRepeatDelay = 4800; // milliseconds
 
 class ExecProcess {
 	// execPath: the path to the binary to run
@@ -54,7 +55,7 @@ class ExecProcess {
 
 		this.execPath = execPath;
 		if (this.execPath.indexOf ("/") !== 0) {
-			this.execPath = App.BIN_DIRECTORY + "/" + this.execPath;
+			this.execPath = Path.join (App.BIN_DIRECTORY, this.execPath);
 		}
 
 		this.workingPath = workingPath;
@@ -72,6 +73,9 @@ class ExecProcess {
 		}
 		this.execArgs = execArgs;
 
+		this.isDrainingStdin = false;
+		this.stdinWriteData = "";
+
 		this.dataCallback = dataCallback;
 		this.endCallback = endCallback;
 		this.process = null;
@@ -80,7 +84,7 @@ class ExecProcess {
 
 	// Run the configured process
 	runProcess () {
-		let proc, endcount, ended, endRun;
+		let proc, endcount;
 
 		try {
 			proc = ChildProcess.spawn (this.execPath, this.execArgs, {
@@ -101,6 +105,8 @@ class ExecProcess {
 		this.process = proc;
 		endcount = 0;
 		this.isEnded = false;
+		this.isDrainingStdin = false;
+		this.stdinWriteData = "";
 		this.exitCode = -1;
 		this.exitSignal = "";
 		this.isExitSuccess = false;
@@ -150,10 +156,11 @@ class ExecProcess {
 			}
 		});
 
-		endRun = (err) => {
+		const endRun = (err) => {
 			if (this.isEnded) {
 				return;
 			}
+
 			this.isEnded = true;
 			if (err != null) {
 				if (this.endCallback != null) {
@@ -193,27 +200,35 @@ class ExecProcess {
 
 	// Write the provided data to the process's stdin
 	write (data) {
-		let proc;
-
-		proc = this.process;
+		const proc = this.process;
 		if (proc == null) {
 			return;
 		}
 
+		if (this.isDrainingStdin) {
+			this.stdinWriteData += data.toString ();
+			return;
+		}
+
 		if (! proc.stdin.write (data)) {
-			Log.debug (`ExecProcess stdin buffer full; pid=${proc.pid} execPath=${this.execPath}`);
+			this.isDrainingStdin = true;
+			this.stdinWriteData = "";
 			proc.stdin.once ("drain", () => {
-				Log.debug (`ExecProcess stdin buffer drained; pid=${proc.pid} execPath=${this.execPath}`);
-				proc.stdin.write (data);
+				const writedata = this.stdinWriteData;
+				this.isDrainingStdin = false;
+				this.stdinWriteData = "";
+				if (writedata.length > 0) {
+					this.write (writedata);
+				}
 			});
 		}
 	}
 
 	// Parse any data contained in process buffers
 	parseBuffer () {
-		let pos, line, lines, endParse;
+		let pos, line;
 
-		endParse = () => {
+		const endParse = () => {
 			if (this.isPaused) {
 				this.resumeEvents ();
 			}
@@ -226,7 +241,7 @@ class ExecProcess {
 			}
 		};
 
-		lines = [ ];
+		const lines = [ ];
 		while (true) {
 			pos = this.stdoutBuffer.indexOf ("\n");
 			if (pos < 0) {
@@ -271,22 +286,19 @@ class ExecProcess {
 
 	// Stop the process
 	stop () {
-		let pid, repeatKill;
-
 		if (this.isEnded) {
 			return;
 		}
 
-		pid = this.process.pid;
 		this.process.kill ("SIGTERM");
-		repeatKill = () => {
+		const repeatKill = () => {
 			if (this.isEnded) {
 				return;
 			}
+
 			this.process.kill ("SIGKILL");
 		};
-		setTimeout (repeatKill, STOP_SIGNAL_REPEAT_DELAY);
+		setTimeout (repeatKill, StopSignalRepeatDelay);
 	}
 }
-
 module.exports = ExecProcess;

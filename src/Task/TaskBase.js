@@ -32,11 +32,10 @@
 "use strict";
 
 const App = global.App || { };
-const Crypto = require ("crypto");
-const Fs = require ("fs");
-const Result = require (App.SOURCE_DIRECTORY + "/Result");
-const Log = require (App.SOURCE_DIRECTORY + "/Log");
-const SystemInterface = require (App.SOURCE_DIRECTORY + "/SystemInterface");
+const Path = require ("path");
+const Result = require (Path.join (App.SOURCE_DIRECTORY, "Result"));
+const Log = require (Path.join (App.SOURCE_DIRECTORY, "Log"));
+const SystemInterface = require (Path.join (App.SOURCE_DIRECTORY, "SystemInterface"));
 
 class TaskBase {
 	constructor () {
@@ -59,7 +58,7 @@ class TaskBase {
 		this.statusMap = { };
 
 		// This value holds the task's creation time
-		this.createTime = new Date ().getTime ();
+		this.createTime = Date.now ();
 
 		// This value holds the task's start time
 		this.startTime = 0;
@@ -95,7 +94,7 @@ class TaskBase {
 
 		s = `<Task id=${this.id} name="${this.name}"`;
 		if (Object.keys (this.statusMap).length > 0) {
-			s += " " + JSON.stringify (this.statusMap);
+			s += ` ${JSON.stringify (this.statusMap)}`;
 		}
 		if (this.isRunning) {
 			s += " isRunning";
@@ -113,18 +112,16 @@ class TaskBase {
 
 	// Configure the task using values in the provided params object. Returns a Result value.
 	configure (configParams) {
-		let fields;
-
-		fields = SystemInterface.parseFields (this.configureParams, configParams);
+		const fields = SystemInterface.parseFields (this.configureParams, configParams);
 		if (SystemInterface.isError (fields)) {
 			Log.err (`${this.toString ()} configuration parse error; configParams=${JSON.stringify (configParams)} err=${fields}`);
-			return (Result.INVALID_PARAMS);
+			return (Result.InvalidParamsError);
 		}
 
 		this.configureMap = fields;
 		this.doConfigure ();
 
-		return (Result.SUCCESS);
+		return (Result.Success);
 	}
 
 	// Return a SystemInterface TaskItem object with fields populated from the task
@@ -148,8 +145,9 @@ class TaskBase {
 
 		this.isRunning = true;
 		this.statusMap.isRunning = true;
-		this.startTime = new Date ().getTime ();
+		this.startTime = Date.now ();
 		this.setPercentComplete (0);
+
 		this.doRun ();
 	}
 
@@ -159,7 +157,7 @@ class TaskBase {
 
 		this.isRunning = false;
 		delete (this.statusMap["isRunning"]);
-		this.endTime = new Date ().getTime ();
+		this.endTime = Date.now ();
 
 		if (this.isSuccess && (this.resultObjectType != "")) {
 			result = SystemInterface.parseTypeObject (this.resultObjectType, this.resultObject);

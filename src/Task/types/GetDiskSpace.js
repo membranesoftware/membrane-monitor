@@ -31,15 +31,15 @@
 
 const App = global.App || { };
 const Path = require ("path");
-const Log = require (App.SOURCE_DIRECTORY + "/Log");
-const FsUtil = require (App.SOURCE_DIRECTORY + "/FsUtil");
-const SystemInterface = require (App.SOURCE_DIRECTORY + "/SystemInterface");
-const TaskBase = require (App.SOURCE_DIRECTORY + "/Task/TaskBase");
+const Log = require (Path.join (App.SOURCE_DIRECTORY, "Log"));
+const FsUtil = require (Path.join (App.SOURCE_DIRECTORY, "FsUtil"));
+const SystemInterface = require (Path.join (App.SOURCE_DIRECTORY, "SystemInterface"));
+const TaskBase = require (Path.join (App.SOURCE_DIRECTORY, "Task", "TaskBase"));
 
 class GetDiskSpace extends TaskBase {
 	constructor () {
 		super ();
-		this.name = App.uiText.getText ("getDiskSpaceTaskName");
+		this.name = App.uiText.getText ("GetDiskSpaceTaskName");
 
 		this.configureParams = [
 			{
@@ -50,7 +50,7 @@ class GetDiskSpace extends TaskBase {
 			}
 		];
 
-		this.runSourcePath = Path.join (App.BIN_DIRECTORY, "GetDiskSpace_" + process.platform + ".js");
+		this.runSourcePath = Path.join (App.BIN_DIRECTORY, `GetDiskSpace_${process.platform}.js`);
 	}
 
 	// Subclass method. Implementations should execute task actions and call end when complete.

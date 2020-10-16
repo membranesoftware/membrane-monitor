@@ -27,38 +27,30 @@
 * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 * POSSIBILITY OF SUCH DAMAGE.
 */
-// Class that holds intent type data
+// Intent subclasses and utility functions
 
 "use strict";
 
 const App = global.App || { };
-const Result = require (App.SOURCE_DIRECTORY + "/Result");
-const SystemInterface = require (App.SOURCE_DIRECTORY + "/SystemInterface");
+const Path = require ("path");
+const Result = require (Path.join (App.SOURCE_DIRECTORY, "Result"));
+const SystemInterface = require (Path.join (App.SOURCE_DIRECTORY, "SystemInterface"));
 const IntentTypes = require ("./types");
 
-function Intent () {
-
-}
-
-module.exports = Intent;
-
-Intent.IntentTypes = IntentTypes;
 exports.IntentTypes = IntentTypes;
 
 // Return a newly created intent of the specified type name and configure it with the provided object. Returns null if the intent could not be created, indicating that the type name was not found or the configuration was not valid.
-Intent.createIntent = function (typeName, configureParams) {
-	let type, intent;
-
-	type = Intent.IntentTypes[typeName];
+exports.createIntent = (typeName, configureParams) => {
+	const type = IntentTypes[typeName];
 	if (type == null) {
 		return (null);
 	}
 
-	intent = new type ();
+	const intent = new type ();
 	if ((typeof configureParams != "object") || (configureParams == null)) {
 		configureParams = { };
 	}
-	if (intent.configure (configureParams) != Result.SUCCESS) {
+	if (intent.configure (configureParams) != Result.Success) {
 		return (null);
 	}
 
@@ -66,17 +58,15 @@ Intent.createIntent = function (typeName, configureParams) {
 };
 
 // Return a newly created intent, as constructed with the provided command, or null if the intent could not be created.
-Intent.createIntentFromCommand = function (command) {
-	let cmd, intent;
-
-	cmd = SystemInterface.parseCommand (command);
+exports.createIntentFromCommand = (command) => {
+	const cmd = SystemInterface.parseCommand (command);
 	if (SystemInterface.isError (cmd)) {
 		return (null);
 	}
 
-	for (let type of Object.values (Intent.IntentTypes)) {
-		intent = new type ();
-		if (intent.configureFromCommand (cmd) == Result.SUCCESS) {
+	for (const type of Object.values (IntentTypes)) {
+		const intent = new type ();
+		if (intent.configureFromCommand (cmd) == Result.Success) {
 			return (intent);
 		}
 	}

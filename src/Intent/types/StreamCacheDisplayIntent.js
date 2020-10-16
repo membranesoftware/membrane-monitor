@@ -38,23 +38,24 @@ const IntentBase = require (Path.join (App.SOURCE_DIRECTORY, "Intent", "IntentBa
 
 const AgentCommandWaitPeriod = 5000; // milliseconds
 
-class MediaDisplayIntent extends IntentBase {
+class StreamCacheDisplayIntent extends IntentBase {
 	constructor () {
 		super ();
-		this.name = "MediaDisplayIntent";
-		this.displayName = "Play video streams";
-		this.stateType = "MediaDisplayIntentState";
+		this.name = "StreamCacheDisplayIntent";
+		this.displayName = "Play cached streams";
+		this.stateType = "StreamCacheDisplayIntentState";
 		this.isDisplayIntent = true;
 
 		// Read-only data members
 		this.isPaused = false;
+
+		this.items = [ ];
+		this.itemChoices = [ ];
+		this.itemRefreshCount = 0;
 	}
 
 	// Configure the intent's state using values in the provided params object and return a Result value
 	doConfigure (configParams) {
-		if (Array.isArray (configParams.items)) {
-			this.state.items = configParams.items;
-		}
 		if (typeof configParams.isShuffle == "boolean") {
 			this.state.isShuffle = configParams.isShuffle;
 		}
@@ -80,12 +81,6 @@ class MediaDisplayIntent extends IntentBase {
 
 	// Perform actions appropriate when the intent becomes active
 	doStart () {
-		if (! Array.isArray (this.state.items)) {
-			this.state.items = [ ];
-		}
-		if (! Array.isArray (this.state.itemChoices)) {
-			this.state.itemChoices = [ ];
-		}
 		if (typeof this.state.isShuffle != "boolean") {
 			this.state.isShuffle = false;
 		}
@@ -125,9 +120,41 @@ class MediaDisplayIntent extends IntentBase {
 
 	// Perform actions appropriate for the current state of the application
 	doUpdate () {
-		let play, item;
+		let refresh, play, item;
 
-		if ((this.state.items.length <= 0) || this.isPaused) {
+		const server = App.systemAgent.getServer ("MonitorServer");
+		if ((this.items.length > 0) && (this.itemRefreshCount <= 0)) {
+			refresh = false;
+			if (server != null) {
+				if (this.items.length != Object.keys (server.streamMap).length) {
+					refresh = true;
+				}
+				else {
+					for (const item of this.items) {
+						if (server.streamMap[item] === undefined) {
+							refresh = true;
+							break;
+						}
+					}
+				}
+			}
+			if (refresh) {
+				this.items = [ ];
+				this.itemChoices = [ ];
+			}
+			this.itemRefreshCount = this.items.length;
+		}
+		if (this.items.length <= 0) {
+			if (server != null) {
+				this.items = Object.keys (server.streamMap);
+				this.itemChoices = [ ];
+				this.itemRefreshCount = this.items.length;
+			}
+			if (this.items.length <= 0) {
+				return;
+			}
+		}
+		if (this.isPaused) {
 			return;
 		}
 		if (! this.isDisplayConditionActive) {
@@ -161,21 +188,17 @@ class MediaDisplayIntent extends IntentBase {
 		}
 
 		if (this.state.isShuffle) {
-			item = this.getRandomChoice (this.state.items, this.state.itemChoices);
+			item = this.getRandomChoice (this.items, this.itemChoices);
 		}
 		else {
-			item = this.getSequentialChoice (this.state.items, this.state.itemChoices);
+			item = this.getSequentialChoice (this.items, this.itemChoices);
 		}
 		if (item == null) {
 			return;
 		}
 
-		if (item.streamUrl != "") {
-			this.executePlayMedia (item);
-		}
-		else if (item.streamId != "") {
-			this.executePlayCacheStream (item);
-		}
+		this.executePlayCacheStream (item);
+		--(this.itemRefreshCount);
 
 		this.lastCommandTime = this.updateTime;
 		if ((this.state.minItemDisplayDuration > 0) && (this.state.maxItemDisplayDuration > 0)) {
@@ -183,70 +206,11 @@ class MediaDisplayIntent extends IntentBase {
 		}
 	}
 
-	// Execute a PlayMedia command for the provided stream item
-	executePlayMedia (item) {
-		let streamurl;
-
-		streamurl = item.streamUrl;
-		if (item.streamId != "") {
-			const playparams = {
-				streamId: item.streamId
-			};
-			if (typeof item.startPosition == "number") {
-				playparams.startPosition = item.startPosition;
-			}
-			if ((this.state.minStartPositionDelta > 0) || (this.state.maxStartPositionDelta > 0)) {
-				playparams.minStartPositionDelta = this.state.minStartPositionDelta;
-				playparams.maxStartPositionDelta = this.state.maxStartPositionDelta;
-			}
-			const playcmd = App.systemAgent.createCommand ("GetHlsManifest", SystemInterface.Constant.Stream, playparams);
-			if (playcmd == null) {
-				return;
-			}
-			streamurl += `?${SystemInterface.Constant.UrlQueryParameter}=${encodeURIComponent (JSON.stringify (playcmd))}`;
-		}
-
-		const params = {
-			mediaName: item.mediaName,
-			streamUrl: streamurl
-		};
-		if (item.streamId != "") {
-			params.streamId = item.streamId;
-		}
-		if (typeof item.startPosition == "number") {
-			params.startPosition = item.startPosition;
-		}
-		if ((this.state.minStartPositionDelta > 0) || (this.state.maxStartPositionDelta > 0)) {
-			params.minStartPositionDelta = this.state.minStartPositionDelta;
-			params.maxStartPositionDelta = this.state.maxStartPositionDelta;
-		}
-		if ((item.streamId != "") && (typeof item.thumbnailUrl == "string") && (typeof item.thumbnailIndex == "number")) {
-			const thumbnailcmd = App.systemAgent.createCommand ("GetThumbnailImage", SystemInterface.Constant.Stream, {
-				id: item.streamId,
-				thumbnailIndex: item.thumbnailIndex
-			});
-			if (thumbnailcmd != null) {
-				params.thumbnailUrl = `${item.thumbnailUrl}?${SystemInterface.Constant.UrlQueryParameter}=${encodeURIComponent (JSON.stringify (thumbnailcmd))}`;
-			}
-		}
-
-		const cmd = App.systemAgent.createCommand ("PlayMedia", SystemInterface.Constant.Monitor, params);
-		if (cmd == null) {
-			return;
-		}
-		App.systemAgent.agentControl.invokeCommand (App.systemAgent.agentId, SystemInterface.Constant.DefaultInvokePath, cmd, SystemInterface.CommandId.CommandResult).catch ((err) => {
-			Log.debug (`${this.toString ()} failed to invoke PlayMedia; err=${err}`);
-		});
-	}
-
-	// Execute a PlayCacheStream command for the provided stream item
+	// Execute a PlayCacheStream command for the provided target agent and stream item
 	executePlayCacheStream (item) {
 		const params = {
-			streamId: item.streamId
+			streamId: item
 		};
-		if (typeof item.startPosition == "number") {
-			params.startPosition = item.startPosition;
-		}
 		if ((this.state.minStartPositionDelta > 0) || (this.state.maxStartPositionDelta > 0)) {
 			params.minStartPositionDelta = this.state.minStartPositionDelta;
 			params.maxStartPositionDelta = this.state.maxStartPositionDelta;
@@ -261,4 +225,4 @@ class MediaDisplayIntent extends IntentBase {
 		});
 	}
 }
-module.exports = MediaDisplayIntent;
+module.exports = StreamCacheDisplayIntent;
