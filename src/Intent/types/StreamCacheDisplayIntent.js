@@ -1,5 +1,5 @@
 /*
-* Copyright 2018-2020 Membrane Software <author@membranesoftware.com> https://membranesoftware.com
+* Copyright 2018-2021 Membrane Software <author@membranesoftware.com> https://membranesoftware.com
 *
 * Redistribution and use in source and binary forms, with or without
 * modification, are permitted provided that the following conditions are met:
@@ -31,30 +31,40 @@
 
 const App = global.App || { };
 const Path = require ("path");
-const Result = require (Path.join (App.SOURCE_DIRECTORY, "Result"));
 const Log = require (Path.join (App.SOURCE_DIRECTORY, "Log"));
+const FsUtil = require (Path.join (App.SOURCE_DIRECTORY, "FsUtil"));
 const SystemInterface = require (Path.join (App.SOURCE_DIRECTORY, "SystemInterface"));
 const IntentBase = require (Path.join (App.SOURCE_DIRECTORY, "Intent", "IntentBase"));
 
-const AgentCommandWaitPeriod = 5000; // milliseconds
+const MinRestingPeriod = 5000; // milliseconds
+
+// Stage names
+const Initializing = "initializing";
+const Initializing2 = "initializing2";
+const Playing = "playing";
+const Resting = "resting";
 
 class StreamCacheDisplayIntent extends IntentBase {
 	constructor () {
 		super ();
-		this.name = "StreamCacheDisplayIntent";
-		this.displayName = "Play cached streams";
+		this.displayName = App.uiText.getText ("StreamCacheDisplayIntentName");
 		this.stateType = "StreamCacheDisplayIntentState";
 		this.isDisplayIntent = true;
 
 		// Read-only data members
 		this.isPaused = false;
+		this.lastCommandTime = 0;
+		this.nextCommandTime = 0;
+		this.lastPauseTime = 0;
+		this.cacheMtime = 0;
 
+		this.cacheDataPath = Path.join (App.DATA_DIRECTORY, App.StreamCachePath);
 		this.items = [ ];
 		this.itemChoices = [ ];
-		this.itemRefreshCount = 0;
+		this.monitorStatus = { };
 	}
 
-	// Configure the intent's state using values in the provided params object and return a Result value
+	// Configure the intent's state using values in the provided params object
 	doConfigure (configParams) {
 		if (typeof configParams.isShuffle == "boolean") {
 			this.state.isShuffle = configParams.isShuffle;
@@ -75,11 +85,9 @@ class StreamCacheDisplayIntent extends IntentBase {
 		if (typeof configParams.maxStartPositionDelta == "number") {
 			this.state.maxStartPositionDelta = configParams.maxStartPositionDelta;
 		}
-
-		return (Result.Success);
 	}
 
-	// Perform actions appropriate when the intent becomes active
+	// Execute actions appropriate when the intent becomes active
 	doStart () {
 		if (typeof this.state.isShuffle != "boolean") {
 			this.state.isShuffle = false;
@@ -87,8 +95,18 @@ class StreamCacheDisplayIntent extends IntentBase {
 		if (typeof this.state.minItemDisplayDuration != "number") {
 			this.state.minItemDisplayDuration = 300;
 		}
+		else {
+			if (this.state.minItemDisplayDuration < 1) {
+				this.state.minItemDisplayDuration = 1;
+			}
+		}
 		if (typeof this.state.maxItemDisplayDuration != "number") {
 			this.state.maxItemDisplayDuration = 900;
+		}
+		else {
+			if (this.state.maxItemDisplayDuration < 1) {
+				this.state.maxItemDisplayDuration = 1;
+			}
 		}
 		if (typeof this.state.minStartPositionDelta != "number") {
 			this.state.minStartPositionDelta = 0;
@@ -118,111 +136,102 @@ class StreamCacheDisplayIntent extends IntentBase {
 		}
 	}
 
-	// Perform actions appropriate for the current state of the application
+	// Execute actions appropriate for the current state of the application
 	doUpdate () {
-		let refresh, play, item;
-
-		const server = App.systemAgent.getServer ("MonitorServer");
-		if ((this.items.length > 0) && (this.itemRefreshCount <= 0)) {
-			refresh = false;
-			if (server != null) {
-				if (this.items.length != Object.keys (server.streamMap).length) {
-					refresh = true;
-				}
-				else {
-					for (const item of this.items) {
-						if (server.streamMap[item] === undefined) {
-							refresh = true;
-							break;
-						}
-					}
-				}
-			}
-			if (refresh) {
-				this.items = [ ];
-				this.itemChoices = [ ];
-			}
-			this.itemRefreshCount = this.items.length;
-		}
-		if (this.items.length <= 0) {
-			if (server != null) {
-				this.items = Object.keys (server.streamMap);
-				this.itemChoices = [ ];
-				this.itemRefreshCount = this.items.length;
-			}
-			if (this.items.length <= 0) {
-				return;
-			}
-		}
-		if (this.isPaused) {
-			return;
-		}
 		if (! this.isDisplayConditionActive) {
 			this.setPaused (false);
-			this.nextCommandTime = 0;
+			this.clearStage ();
 			return;
 		}
-		if (! this.hasTimeElapsed (this.lastCommandTime, AgentCommandWaitPeriod)) {
-			return;
-		}
-
-		const agent = App.systemAgent.agentControl.getLocalAgent ();
-		const monitorstatus = agent.lastStatus.monitorServerStatus;
+		const monitorstatus = App.systemAgent.agentControl.getLocalAgent ().lastStatus.monitorServerStatus;
 		if ((typeof monitorstatus != "object") || (monitorstatus == null)) {
+			this.setPaused (false);
+			this.clearStage ();
 			return;
 		}
-
-		play = false;
-		if (monitorstatus.displayState !== SystemInterface.Constant.PlayMediaDisplayState) {
-			play = true;
-		}
-		if (! play) {
-			if ((this.state.minItemDisplayDuration > 0) && (this.state.maxItemDisplayDuration > 0)) {
-				if (this.updateTime >= this.nextCommandTime) {
-					play = true;
-				}
-			}
-		}
-		if (! play) {
-			return;
-		}
-
-		if (this.state.isShuffle) {
-			item = this.getRandomChoice (this.items, this.itemChoices);
-		}
-		else {
-			item = this.getSequentialChoice (this.items, this.itemChoices);
-		}
-		if (item == null) {
-			return;
-		}
-
-		this.executePlayCacheStream (item);
-		--(this.itemRefreshCount);
-
-		this.lastCommandTime = this.updateTime;
-		if ((this.state.minItemDisplayDuration > 0) && (this.state.maxItemDisplayDuration > 0)) {
-			this.nextCommandTime = this.updateTime + this.prng.getRandomInteger (this.state.minItemDisplayDuration * 1000, this.state.maxItemDisplayDuration * 1000);
+		this.monitorStatus = monitorstatus;
+		if (this.stage == "") {
+			this.setStage (Initializing);
 		}
 	}
 
-	// Execute a PlayCacheStream command for the provided target agent and stream item
-	executePlayCacheStream (item) {
+	// Read entries from the stream cache and update the choice list if needed
+	async readStreamCache () {
+		const mtime = this.monitorStatus.cacheMtime;
+		if (this.cacheMtime == mtime) {
+			return;
+		}
+		const files = await FsUtil.readDirectory (this.cacheDataPath);
+		this.items = files.filter ((file) => {
+			return (App.systemAgent.getUuidCommand (file) == SystemInterface.CommandId.StreamItem);
+		});
+		this.itemChoices = [ ];
+		this.cacheMtime = mtime;
+	}
+
+	// Stage methods
+	initializing () {
+		this.isPaused = false;
+		this.stageAwait (this.readStreamCache (), Initializing2);
+	}
+
+	initializing2 () {
+		if (this.stagePromiseError != null) {
+			Log.debug (`${this.toString ()} readStreamCacheComplete failed to read stream cache; err=${this.stagePromiseError}`);
+			this.items = [ ];
+			this.itemChoices = [ ];
+		}
+		if (this.items.length <= 0) {
+			this.stageAwait (this.timeoutWait (MinRestingPeriod), Initializing);
+		}
+		else {
+			this.setStage (Playing);
+		}
+	}
+
+	playing () {
+		const id = this.state.isShuffle ?
+			this.getRandomChoice (this.items, this.itemChoices) :
+			this.getSequentialChoice (this.items, this.itemChoices);
+		if (typeof id != "string") {
+			this.setStage (Initializing);
+			return;
+		}
 		const params = {
-			streamId: item
+			streamId: id
 		};
 		if ((this.state.minStartPositionDelta > 0) || (this.state.maxStartPositionDelta > 0)) {
 			params.minStartPositionDelta = this.state.minStartPositionDelta;
 			params.maxStartPositionDelta = this.state.maxStartPositionDelta;
 		}
-
-		const cmd = App.systemAgent.createCommand ("PlayCacheStream", SystemInterface.Constant.Monitor, params);
+		const cmd = App.systemAgent.createCommand ("PlayCacheStream", params);
 		if (cmd == null) {
 			return;
 		}
 		App.systemAgent.agentControl.invokeCommand (App.systemAgent.agentId, SystemInterface.Constant.DefaultInvokePath, cmd, SystemInterface.CommandId.CommandResult).catch ((err) => {
 			Log.debug (`${this.toString ()} failed to invoke PlayCacheStream; err=${err}`);
 		});
+
+		this.lastCommandTime = this.updateTime;
+		this.nextCommandTime = this.updateTime + App.systemAgent.getRandomInteger (this.state.minItemDisplayDuration * 1000, this.state.maxItemDisplayDuration * 1000);
+		this.stageAwait (this.readStreamCache (), Resting);
+	}
+
+	resting () {
+		if (! this.hasTimeElapsed (this.lastCommandTime, MinRestingPeriod)) {
+			return;
+		}
+		if (this.isPaused) {
+			return;
+		}
+		if (this.monitorStatus.displayState !== SystemInterface.Constant.PlayMediaDisplayState) {
+			this.setStage (Playing);
+			return;
+		}
+		if (this.updateTime >= this.nextCommandTime) {
+			this.setStage (Playing);
+			return;
+		}
 	}
 }
 module.exports = StreamCacheDisplayIntent;

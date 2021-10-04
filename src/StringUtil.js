@@ -1,5 +1,5 @@
 /*
-* Copyright 2018-2020 Membrane Software <author@membranesoftware.com> https://membranesoftware.com
+* Copyright 2018-2021 Membrane Software <author@membranesoftware.com> https://membranesoftware.com
 *
 * Redistribution and use in source and binary forms, with or without
 * modification, are permitted provided that the following conditions are met:
@@ -31,7 +31,9 @@
 
 "use strict";
 
-// Return the provided string with a capitalized first letter
+const Url = require ("url");
+
+// Return the provided string with an uppercased first letter
 exports.capitalized = (str) => {
 	if (str.length <= 0) {
 		return (str);
@@ -40,6 +42,17 @@ exports.capitalized = (str) => {
 		return (str.toUpperCase ());
 	}
 	return (str.substring (0, 1).toUpperCase () + str.substring (1));
+};
+
+// Return the provided string with a lowercased first letter
+exports.uncapitalized = (str) => {
+	if (str.length <= 0) {
+		return (str);
+	}
+	if (str.length == 1) {
+		return (str.toLowerCase ());
+	}
+	return (str.substring (0, 1).toLowerCase () + str.substring (1));
 };
 
 // Return the hostname portion of an address string
@@ -91,4 +104,54 @@ exports.getDurationString = (ms) => {
 	duration += `:${s}`;
 
 	return (duration);
+};
+
+// Return a size string for the provided number of bytes
+exports.getSizeString = (size) => {
+	if (size <= 0) {
+		return ("0B");
+	}
+	if (size >= (1024 * 1024 * 1024)) {
+		const val = size / (1024 * 1024 * 1024);
+		return (`${val.toFixed (2)}GB`);
+	}
+	if (size >= (1024 * 1024)) {
+		const val = size / (1024 * 1024);
+		return (`${val.toFixed (2)}MB`);
+	}
+	if (size >= 1024) {
+		const val = size / 1024;
+		return (`${val.toFixed (2)}kB`);
+	}
+	return (`${size}B`);
+};
+
+const DefaultUrlProtocol = "protocol:";
+// Return a URL object parsed from input and base, or null if the parse failed
+exports.parseUrl = (input, base) => {
+	let url;
+
+	if ((typeof input != "string") || (input.length <= 0)) {
+		return (null);
+	}
+	if ((typeof base == "string") && (base.length <= 0)) {
+		base = undefined;
+	}
+	if (typeof base == "string") {
+		if ((! input.includes (":")) && (! base.includes (":"))) {
+			base = `${DefaultUrlProtocol}${base}`;
+		}
+	}
+	else {
+		if (! input.includes (":")) {
+			input = `${DefaultUrlProtocol}${input}`;
+		}
+	}
+	try {
+		url = new Url.URL (input, base);
+	}
+	catch (err) {
+		url = null;
+	}
+	return (url);
 };

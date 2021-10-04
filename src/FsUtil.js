@@ -1,5 +1,5 @@
 /*
-* Copyright 2018-2020 Membrane Software <author@membranesoftware.com> https://membranesoftware.com
+* Copyright 2018-2021 Membrane Software <author@membranesoftware.com> https://membranesoftware.com
 *
 * Redistribution and use in source and binary forms, with or without
 * modification, are permitted provided that the following conditions are met:
@@ -45,43 +45,35 @@ exports.createDirectory = (path, endCallback) => {
 		const dirStat = () => {
 			Fs.stat (path, dirStatComplete);
 		};
-
 		const dirStatComplete = (err, stats) => {
 			if ((err != null) && (err.code != "ENOENT")) {
-				executeCallback (`Failed to stat directory "${path}"`);
+				executeCallback (err);
 				return;
 			}
-
 			if (stats != null) {
 				if (! stats.isDirectory ()) {
-					executeCallback (`"${path}" already exists as non-directory`);
+					executeCallback (Error (`"${path}" already exists as non-directory`));
 				}
 				else {
 					mkdirComplete (null);
 				}
-
 				return;
 			}
-
 			Fs.mkdir (path, 0o755, mkdirComplete);
 		};
-
 		const mkdirComplete = (err) => {
 			if (err != null) {
 				if (err.toString ().indexOf ("EEXIST") >= 0) {
 					err = null;
 				}
-
 				executeCallback (err);
 				return;
 			}
-
 			executeCallback (null);
 		};
 
 		dirStat ();
 	};
-
 	if (typeof endCallback == "function") {
 		execute (endCallback);
 	}
@@ -89,7 +81,7 @@ exports.createDirectory = (path, endCallback) => {
 		return (new Promise ((resolve, reject) => {
 			execute ((err) => {
 				if (err != null) {
-					reject (Error (err));
+					reject (err);
 					return;
 				}
 				resolve ();
@@ -126,7 +118,6 @@ exports.readConfigFile = (filename) => {
 				type = lineparts[j];
 				continue;
 			}
-
 			keyparts = lineparts[j].split ("=");
 			if (keyparts.length < 2) {
 				params[keyparts[0]] = true;
@@ -140,10 +131,11 @@ exports.readConfigFile = (filename) => {
 			Log.warn (`Invalid line in configuration file; path=${filename} err="no type value" line=${line}`);
 			continue;
 		}
-
-		configs.push ({ type : type, params : params });
+		configs.push ({
+			type: type,
+			params: params
+		});
 	}
-
 	return (configs);
 };
 
@@ -166,7 +158,6 @@ exports.readConfigKeyFile = (filename) => {
 		if (line.match (/^\s*#/) || line.match (/^\s*$/)) {
 			continue;
 		}
-
 		pos = line.indexOf (" ");
 		if (pos < 0) {
 			config[line] = "";
@@ -175,30 +166,7 @@ exports.readConfigKeyFile = (filename) => {
 			config[line.substring (0, pos)] = line.substring (pos + 1);
 		}
 	}
-
 	return (config);
-};
-
-// Return a size string for the provided number of bytes
-exports.getSizeString = (size) => {
-	let val;
-
-	if (size > (1024 * 1024 * 1024)) {
-		val = size / (1024 * 1024 * 1024);
-		return (`${val.toFixed (2)}GB`);
-	}
-
-	if (size > (1024 * 1024)) {
-		val = size / (1024 * 1024);
-		return (`${val.toFixed (2)}MB`);
-	}
-
-	if (size > 1024) {
-		val = size / (1024 * 1024);
-		return (`${val.toFixed (2)}kB`);
-	}
-
-	return (`${size}B`);
 };
 
 // Gather file stats for a path and invoke endCallback (err, stats) when complete. If endCallback is not provided, instead return a promise that executes the operation.
@@ -206,7 +174,6 @@ exports.statFile = (path, endCallback) => {
 	const execute = (executeCallback) => {
 		Fs.stat (path, executeCallback);
 	};
-
 	if (typeof endCallback == "function") {
 		execute (endCallback);
 	}
@@ -214,7 +181,7 @@ exports.statFile = (path, endCallback) => {
 		return (new Promise ((resolve, reject) => {
 			execute ((err, stats) => {
 				if (err != null) {
-					reject (Error (err));
+					reject (err);
 					return;
 				}
 				resolve (stats);
@@ -233,26 +200,21 @@ exports.statFiles = (fileList, statFunction, endCallback) => {
 					return;
 				}
 				if ((typeof statFunction == "function") && (statFunction (file, stats) !== true)) {
-					callback ("File failed validation check");
+					callback (Error ("File failed validation check"));
 					return;
 				}
-
 				callback ();
 			});
 		};
-
 		const statFilesComplete = (err) => {
 			if (err != null) {
 				executeCallback (err);
 				return;
 			}
-
 			executeCallback ();
 		};
-
 		Async.eachLimit (fileList, 8, statFile, statFilesComplete);
 	};
-
 	if (typeof endCallback == "function") {
 		execute (endCallback);
 	}
@@ -260,7 +222,7 @@ exports.statFiles = (fileList, statFunction, endCallback) => {
 		return (new Promise ((resolve, reject) => {
 			execute ((err) => {
 				if (err != null) {
-					reject (Error (err));
+					reject (err);
 					return;
 				}
 				resolve ();
@@ -274,7 +236,6 @@ exports.openFile = (path, endCallback) => {
 	const execute = (executeCallback) => {
 		Fs.open (path, "r", 0, executeCallback);
 	};
-
 	if (typeof endCallback == "function") {
 		execute (endCallback);
 	}
@@ -282,10 +243,36 @@ exports.openFile = (path, endCallback) => {
 		return (new Promise ((resolve, reject) => {
 			execute ((err, fd) => {
 				if (err != null) {
-					reject (Error (err));
+					reject (err);
 					return;
 				}
 				resolve (fd);
+			});
+		}));
+	}
+};
+
+// Read data from a file and invoke endCallback (err, data) when complete. If endCallback is not provided, instead return a promise that executes the operation.
+exports.readFile = (filename, endCallback) => {
+	const execute = (executeCallback) => {
+		Fs.readFile (filename, (err, data) => {
+			if (data != null) {
+				data = data.toString ();
+			}
+			executeCallback (err, data);
+		});
+	};
+	if (typeof endCallback == "function") {
+		execute (endCallback);
+	}
+	else {
+		return (new Promise ((resolve, reject) => {
+			execute ((err, data) => {
+				if (err != null) {
+					reject (err);
+					return;
+				}
+				resolve (data);
 			});
 		}));
 	}
@@ -296,7 +283,6 @@ exports.writeFile = (filename, data, options, endCallback) => {
 	const execute = (executeCallback) => {
 		Fs.writeFile (filename, data, options, executeCallback);
 	};
-
 	if (typeof endCallback == "function") {
 		execute (endCallback);
 	}
@@ -304,7 +290,49 @@ exports.writeFile = (filename, data, options, endCallback) => {
 		return (new Promise ((resolve, reject) => {
 			execute ((err) => {
 				if (err != null) {
-					reject (Error (err));
+					reject (err);
+					return;
+				}
+				resolve ();
+			});
+		}));
+	}
+};
+
+// Remove a file and invoke endCallback (err) when complete. If endCallback is not provided, instead return a promise that executes the operation.
+exports.removeFile = (filename, endCallback) => {
+	const execute = (executeCallback) => {
+		Fs.unlink (filename, executeCallback);
+	};
+	if (typeof endCallback == "function") {
+		execute (endCallback);
+	}
+	else {
+		return (new Promise ((resolve, reject) => {
+			execute ((err) => {
+				if (err != null) {
+					reject (err);
+					return;
+				}
+				resolve ();
+			});
+		}));
+	}
+};
+
+// Copy a file from src to dest and invoke endCallback (err) when complete. If endCallback is not provided, instead return a promise that executes the operation.
+exports.copyFile = (src, dest, endCallback) => {
+	const execute = (executeCallback) => {
+		Fs.copyFile (src, dest, 0, executeCallback);
+	};
+	if (typeof endCallback == "function") {
+		execute (endCallback);
+	}
+	else {
+		return (new Promise ((resolve, reject) => {
+			execute ((err) => {
+				if (err != null) {
+					reject (err);
 					return;
 				}
 				resolve ();
@@ -316,22 +344,19 @@ exports.writeFile = (filename, data, options, endCallback) => {
 // Read data from a file and invoke dataCallback (lines, dataEndCallback) for each set of full lines encountered, then invoke endCallback (err) when complete. If endCallback is not provided, instead return a promise that executes the operation.
 exports.readFileLines = (filename, dataCallback, endCallback) => {
 	const execute = (executeCallback) => {
-		let readfd, buffer, parsedata;
+		let readfd, parsedata;
 
-		setTimeout (() => {
-			readfd = -1;
-			buffer = Buffer.alloc (FsReadBlockSize);
-			parsedata = "";
-			exports.openFile (filename, openComplete);
-		}, 0);
-		const openComplete = (err, fd) => {
+		const buffer = Buffer.alloc (FsReadBlockSize);
+		readfd = -1;
+		parsedata = "";
+		exports.openFile (filename, (err, fd) => {
 			if (err != null) {
 				endExecute (err);
 				return;
 			}
 			readfd = fd;
 			Fs.read (readfd, buffer, 0, FsReadBlockSize, null, readComplete);
-		};
+		});
 		const readComplete = (err, bytesRead, buffer) => {
 			let pos, endpos;
 
@@ -339,7 +364,6 @@ exports.readFileLines = (filename, dataCallback, endCallback) => {
 				endExecute (err);
 				return;
 			}
-
 			if (bytesRead <= 0) {
 				endExecute ();
 				return;
@@ -376,7 +400,6 @@ exports.readFileLines = (filename, dataCallback, endCallback) => {
 			executeCallback (err);
 		};
 	};
-
 	if (typeof endCallback == "function") {
 		execute (endCallback);
 	}
@@ -384,7 +407,7 @@ exports.readFileLines = (filename, dataCallback, endCallback) => {
 		return (new Promise ((resolve, reject) => {
 			execute ((err) => {
 				if (err != null) {
-					reject (Error (err));
+					reject (err);
 					return;
 				}
 				resolve ();
@@ -406,8 +429,7 @@ exports.writeStateFile = (filename, state, endCallback) => {
 // Read a previously written state object file and invoke endCallback (err, state) when complete. If endCallback is not provided, instead return a promise that executes the operation.
 exports.readStateFile = (filename, endCallback) => {
 	const execute = (executeCallback) => {
-		Fs.readFile (filename, readFileComplete);
-		function readFileComplete (err, data) {
+		Fs.readFile (filename, (err, data) => {
 			let state;
 
 			if (err != null) {
@@ -427,9 +449,8 @@ exports.readStateFile = (filename, endCallback) => {
 			}
 
 			executeCallback (null, state);
-		}
+		});
 	};
-
 	if (typeof endCallback == "function") {
 		execute (endCallback);
 	}
@@ -437,7 +458,7 @@ exports.readStateFile = (filename, endCallback) => {
 		return (new Promise ((resolve, reject) => {
 			execute ((err, state) => {
 				if (err != null) {
-					reject (Error (err));
+					reject (err);
 					return;
 				}
 				resolve (state);
@@ -451,7 +472,6 @@ exports.readDirectory = (directoryPath, endCallback) => {
 	const execute = (executeCallback) => {
 		Fs.readdir (directoryPath, executeCallback);
 	};
-
 	if (typeof endCallback == "function") {
 		execute (endCallback);
 	}
@@ -459,7 +479,7 @@ exports.readDirectory = (directoryPath, endCallback) => {
 		return (new Promise ((resolve, reject) => {
 			execute ((err, files) => {
 				if (err != null) {
-					reject (Error (err));
+					reject (err);
 					return;
 				}
 				resolve (files);
@@ -468,206 +488,108 @@ exports.readDirectory = (directoryPath, endCallback) => {
 	}
 };
 
-// Remove all files in the specified directory and invoke callback (err) when complete
-exports.removeAllFiles = (directoryPath, callback) => {
-	let fileindex, filenames, curfile;
+// Remove the specified directory, recursing through all contained files and subdirectories, and invoke endCallback (err) when complete. If endCallback is not provided, instead return a promise that executes the operation.
+exports.removeDirectory = (directoryPath, endCallback) => {
+	const execute = async () => {
+		let files;
 
-	Fs.readdir (directoryPath, readdirComplete);
-	function readdirComplete (err, files) {
-		if (err != null) {
-			callback (err);
-			return;
+		try {
+			files = await exports.readDirectory (directoryPath);
 		}
-
-		filenames = files;
-		fileindex = 0;
-		checkNextFile ();
-	}
-
-	function checkNextFile () {
-		if (fileindex >= filenames.length) {
-			callback (null);
-			return;
-		}
-
-		curfile = Path.join (directoryPath, filenames[fileindex]);
-		Fs.stat (curfile, statComplete);
-	}
-
-	function statComplete (err, stats) {
-		if (err != null) {
-			callback (err);
-			return;
-		}
-
-		if (! stats.isFile ()) {
-			++fileindex;
-			checkNextFile ();
-			return;
-		}
-
-		Fs.unlink (curfile, unlinkComplete);
-	}
-
-	function unlinkComplete (err) {
-		if (err != null) {
-			callback (err);
-			return;
-		}
-
-		++fileindex;
-		checkNextFile ();
-	}
-};
-
-// Remove the specified directory, recursing through all contained files and subdirectories, and invoke callback (err) when complete.
-exports.removeDirectory = (directoryPath, callback) => {
-	let fileindex, filenames, curfile;
-
-	Fs.readdir (directoryPath, readdirComplete);
-	function readdirComplete (err, files) {
-		if (err != null) {
-			if (err.code == "ENOENT") {
-				err = null;
+		catch (err) {
+			if (err.code != "ENOENT") {
+				throw err;
 			}
-			callback (err);
 			return;
 		}
 
-		filenames = files;
-		fileindex = 0;
-		checkNextFile ();
+		for (const file of files) {
+			const path = Path.join (directoryPath, file);
+			const stats = await exports.statFile (path);
+			if (stats.isDirectory ()) {
+				await exports.removeDirectory (path);
+			}
+			else {
+				await new Promise ((resolve, reject) => {
+					Fs.unlink (path, (err) => {
+						if (err) {
+							reject (err);
+							return;
+						}
+						resolve ();
+					});
+				});
+			}
+		}
+
+		await new Promise ((resolve, reject) => {
+			Fs.rmdir (directoryPath, (err) => {
+				if (err) {
+					reject (err);
+					return;
+				}
+				resolve ();
+			});
+		});
+	};
+
+	if (typeof endCallback == "function") {
+		execute ().then (() => {
+			endCallback ();
+		}).catch ((err) => {
+			endCallback (err);
+		});
 	}
-
-	function checkNextFile () {
-		if (fileindex >= filenames.length) {
-			endCheckFiles ();
-			return;
-		}
-
-		curfile = Path.join (directoryPath, filenames[fileindex]);
-		Fs.stat (curfile, statComplete);
-	}
-
-	function statComplete (err, stats) {
-		if (err != null) {
-			callback (err);
-			return;
-		}
-
-		if (stats.isDirectory ()) {
-			exports.removeDirectory (curfile, removeComplete);
-			return;
-		}
-
-		Fs.unlink (curfile, removeComplete);
-	}
-
-	function removeComplete (err) {
-		if (err != null) {
-			callback (err);
-			return;
-		}
-
-		++fileindex;
-		checkNextFile ();
-	}
-
-	function endCheckFiles () {
-		Fs.rmdir (directoryPath, rmdirComplete);
-	}
-
-	function rmdirComplete (err) {
-		if (err != null) {
-			callback (err);
-			return;
-		}
-
-		callback ();
+	else {
+		return (execute ());
 	}
 };
 
-// Scan the specified directory path and recurse into all subdirectories to find available filenames. Invokes the provided callback with err and filename parameters for each file found; a callback with a null filename parameter indicates that no more files are available.
-exports.findFiles = (directoryPath, callback) => {
-	let fileindex, filenames, curfile;
-
-	Fs.readdir (directoryPath, readdirComplete);
-	function readdirComplete (err, files) {
-		if (err != null) {
-			callback (err, null);
-			return;
+// Scan the specified directory path and recurse into all subdirectories to find regular files. Invokes findCallback (filename, callback) for each file found and endCallback (err) when complete. If endCallback is not provided, instead return a promise that executes the operation.
+exports.findFiles = (findCallback, directoryPath, endCallback) => {
+	const execute = async () => {
+		const files = await exports.readDirectory (directoryPath);
+		for (const file of files) {
+			const curfile = Path.join (directoryPath, file);
+			const stats = await exports.statFile (curfile);
+			if (stats.isDirectory ()) {
+				await exports.findFiles (findCallback, curfile);
+			}
+			else if (stats.isFile ()) {
+				await new Promise ((resolve, reject) => {
+					findCallback (curfile, resolve);
+				});
+			}
 		}
-
-		filenames = files;
-		fileindex = 0;
-		checkNextFile ();
+	};
+	if (typeof endCallback == "function") {
+		execute ().then (() => {
+			endCallback ();
+		}).catch ((err) => {
+			endCallback (err);
+		});
 	}
-
-	function checkNextFile () {
-		if (fileindex >= filenames.length) {
-			callback (null, null);
-			return;
-		}
-
-		curfile = Path.join (directoryPath, filenames[fileindex]);
-		Fs.stat (curfile, statComplete);
-	}
-
-	function statComplete (err, stats) {
-		if (err != null) {
-			callback (err, null);
-			return;
-		}
-
-		if (stats.isDirectory ()) {
-			exports.findFiles (curfile, findFilesCallback);
-			return;
-		}
-
-		if (stats.isFile ()) {
-			callback (null, curfile);
-		}
-		++fileindex;
-		checkNextFile ();
-	}
-
-	function findFilesCallback (err, filename) {
-		if (err != null) {
-			callback (err, null);
-			return;
-		}
-
-		if (typeof filename == "string") {
-			callback (null, filename);
-		}
-
-		if (filename === null) {
-			++fileindex;
-			checkNextFile ();
-		}
+	else {
+		return (execute ());
 	}
 };
 
-// Scan the specified directory path and recurse into all subdirectories to find available filenames. Invokes the provided callback when complete, with "err" (non-null if an error occurred) and "fileList" parameters (an array of filenames, or null if an error occurred). If endCallback is not provided, instead return a promise that executes the operation.
+// Scan the specified directory path and recurse into all subdirectories to find regular files. Invokes endCallback (err, fileList) when complete. If endCallback is not provided, instead return a promise that executes the operation.
 exports.findAllFiles = (directoryPath, endCallback) => {
 	const execute = (executeCallback) => {
 		const filelist = [ ];
-		exports.findFiles (directoryPath, findFilesCallback);
-		function findFilesCallback (err, filename) {
+		const fn = (filename, callback) => {
+			filelist.push (filename);
+			process.nextTick (callback);
+		};
+		exports.findFiles (fn, directoryPath, (err) => {
 			if (err != null) {
 				executeCallback (err, null);
 				return;
 			}
-
-			if (filename == null) {
-				executeCallback (null, filelist);
-				return;
-			}
-
-			filelist.push (filename);
-		}
+			executeCallback (null, filelist);
+		});
 	};
-
 	if (typeof endCallback == "function") {
 		execute (endCallback);
 	}
@@ -675,7 +597,7 @@ exports.findAllFiles = (directoryPath, endCallback) => {
 		return (new Promise ((resolve, reject) => {
 			execute ((err, fileList) => {
 				if (err != null) {
-					reject (Error (err));
+					reject (err);
 					return;
 				}
 				resolve (fileList);
@@ -696,7 +618,6 @@ exports.fileExists = (path, endCallback) => {
 					executeCallback (null, false);
 					return;
 				}
-
 				executeCallback (err, null);
 				return;
 			}
@@ -705,11 +626,9 @@ exports.fileExists = (path, endCallback) => {
 				executeCallback (null, false);
 				return;
 			}
-
 			executeCallback (null, true);
 		});
 	};
-
 	if (typeof endCallback == "function") {
 		execute (endCallback);
 	}
@@ -717,7 +636,7 @@ exports.fileExists = (path, endCallback) => {
 		return (new Promise ((resolve, reject) => {
 			execute ((err, exists) => {
 				if (err != null) {
-					reject (Error (err));
+					reject (err);
 					return;
 				}
 				resolve (exists);
@@ -736,7 +655,6 @@ exports.fileExistsSync = (path) => {
 	catch (e) {
 		stat = null;
 	}
-
 	return ((stat != null) && stat.isFile ());
 };
 
@@ -745,7 +663,6 @@ exports.renameFile = (oldPath, newPath, endCallback) => {
 	const execute = (executeCallback) => {
 		Fs.rename (oldPath, newPath, executeCallback);
 	};
-
 	if (typeof endCallback == "function") {
 		execute (endCallback);
 	}
@@ -753,11 +670,45 @@ exports.renameFile = (oldPath, newPath, endCallback) => {
 		return (new Promise ((resolve, reject) => {
 			execute ((err) => {
 				if (err != null) {
-					reject (Error (err));
+					reject (err);
 					return;
 				}
 				resolve ();
 			});
 		}));
+	}
+};
+
+// Generate a temp filename by appending random characters to basePath and invoke endCallback (err, filename) when complete. If endCallback is not provided, instead return a promise that executes the operation.
+exports.getTempFilename = (basePath, endCallback) => {
+	const execute = async () => {
+		const dirname = Path.dirname (basePath);
+		const stats = await exports.statFile (dirname);
+		if (! stats.isDirectory ()) {
+			throw Error ("Temp filename base path is not a directory");
+		}
+
+		while (true) {
+			const filename = `${basePath}_${Date.now ()}_${App.systemAgent.getRandomString (16)}`;
+			try {
+				await exports.statFile (filename);
+			}
+			catch (err) {
+				if (err.code == "ENOENT") {
+					return (filename);
+				}
+				throw err;
+			}
+		}
+	};
+	if (typeof endCallback == "function") {
+		execute ().then ((filename) => {
+			endCallback (null, filename);
+		}).catch ((err) => {
+			endCallback (err);
+		});
+	}
+	else {
+		return (execute ());
 	}
 };

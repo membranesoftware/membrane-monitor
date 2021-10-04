@@ -1,5 +1,5 @@
 /*
-* Copyright 2018-2020 Membrane Software <author@membranesoftware.com> https://membranesoftware.com
+* Copyright 2018-2021 Membrane Software <author@membranesoftware.com> https://membranesoftware.com
 *
 * Redistribution and use in source and binary forms, with or without
 * modification, are permitted provided that the following conditions are met:
@@ -41,11 +41,15 @@ const StopSignalRepeatDelay = 4800; // milliseconds
 class ExecProcess {
 	// execPath: the path to the binary to run
 	// execArgs: an array containing command line arguments for the child process
-	// envParams: an object containing environment variables for the child process
-	// workingPath: the path to the working directory for process execution (defaults to the application data directory if empty)
-	// dataCallback: a function that should be called each time a set of lines is parsed (invoked with an array of strings and a callback)
-	// endCallback: a function that should be called when the process ends (invoked with err and isExitSuccess parameters).
-	constructor (execPath, execArgs, envParams, workingPath, dataCallback, endCallback) {
+	// dataCallback: invoked with (lines, parseCallback) each time a set of output lines is parsed
+	// endCallback: invoked with (err, isExitSuccess) when the process ends
+	constructor (execPath, execArgs, dataCallback, endCallback) {
+		// Read-write data members
+		this.enableStdoutData = true;
+		this.enableStderrData = true;
+		this.env = { };
+		this.workingPath = App.DATA_DIRECTORY;
+
 		// Read-only data members
 		this.isPaused = false;
 		this.isEnded = false;
@@ -58,28 +62,19 @@ class ExecProcess {
 			this.execPath = Path.join (App.BIN_DIRECTORY, this.execPath);
 		}
 
-		this.workingPath = workingPath;
-		if ((typeof this.workingPath != "string") || (this.workingPath == "")) {
-			this.workingPath = App.DATA_DIRECTORY;
+		this.execArgs = [ ];
+		if (Array.isArray (execArgs)) {
+			this.execArgs = execArgs;
 		}
-
-		if ((typeof envParams != "object") || (envParams == null)) {
-			envParams = { };
-		}
-		this.envParams = envParams;
-
-		if (! Array.isArray (execArgs)) {
-			execArgs = [ ];
-		}
-		this.execArgs = execArgs;
-
-		this.isDrainingStdin = false;
-		this.stdinWriteData = "";
 
 		this.dataCallback = dataCallback;
 		this.endCallback = endCallback;
+		this.isDrainingStdin = false;
+		this.stdinWriteData = "";
 		this.process = null;
-		this.runProcess ();
+		setImmediate (() => {
+			this.runProcess ();
+		});
 	}
 
 	// Run the configured process
@@ -89,12 +84,11 @@ class ExecProcess {
 		try {
 			proc = ChildProcess.spawn (this.execPath, this.execArgs, {
 				cwd: this.workingPath,
-				env: this.envParams
+				env: this.env
 			});
 		}
 		catch (err) {
-			Log.err (`Failed to launch child process; execPath=${this.execPath} execArgs=${JSON.stringify (this.execArgs)} workingPath=${this.workingPath} env=${JSON.stringify (this.envParams)} err=${err}\n${err.stack}`);
-
+			Log.err (`Failed to launch child process; execPath=${this.execPath} execArgs=${JSON.stringify (this.execArgs)} workingPath=${this.workingPath} env=${JSON.stringify (this.env)} err=${err}\n${err.stack}`);
 			if (this.endCallback != null) {
 				setTimeout (() => {
 					this.endCallback (err, false);
@@ -116,7 +110,9 @@ class ExecProcess {
 		this.stderrBuffer = "";
 
 		proc.stdout.on ("data", (data) => {
-			this.stdoutBuffer += data.toString ();
+			if (this.enableStdoutData) {
+				this.stdoutBuffer += data.toString ();
+			}
 			this.readByteCount += data.length;
 			this.parseBuffer ();
 		});
@@ -129,7 +125,9 @@ class ExecProcess {
 		});
 
 		proc.stderr.on ("data", (data) => {
-			this.stderrBuffer += data.toString ();
+			if (this.enableStderrData) {
+				this.stderrBuffer += data.toString ();
+			}
 			this.readByteCount += data.length;
 			this.parseBuffer ();
 		});
@@ -160,16 +158,14 @@ class ExecProcess {
 			if (this.isEnded) {
 				return;
 			}
-
 			this.isEnded = true;
 			if (err != null) {
-				if (this.endCallback != null) {
+				if (typeof this.endCallback == "function") {
 					this.endCallback (err, this.isExitSuccess);
 					this.endCallback = null;
 				}
 				return;
 			}
-
 			if (! this.isPaused) {
 				this.parseBuffer ();
 			}
@@ -181,7 +177,6 @@ class ExecProcess {
 		if (this.process == null) {
 			return;
 		}
-
 		this.isPaused = true;
 		this.process.stdout.pause ();
 		this.process.stderr.pause ();
@@ -192,7 +187,6 @@ class ExecProcess {
 		if (this.process == null) {
 			return;
 		}
-
 		this.process.stdout.resume ();
 		this.process.stderr.resume ();
 		this.isPaused = false;
@@ -204,12 +198,10 @@ class ExecProcess {
 		if (proc == null) {
 			return;
 		}
-
 		if (this.isDrainingStdin) {
 			this.stdinWriteData += data.toString ();
 			return;
 		}
-
 		if (! proc.stdin.write (data)) {
 			this.isDrainingStdin = true;
 			this.stdinWriteData = "";
@@ -226,46 +218,42 @@ class ExecProcess {
 
 	// Parse any data contained in process buffers
 	parseBuffer () {
-		let pos, line;
-
 		const endParse = () => {
 			if (this.isPaused) {
 				this.resumeEvents ();
 			}
-
 			if (this.isEnded) {
-				if (this.endCallback != null) {
+				if (typeof this.endCallback == "function") {
 					this.endCallback (null, this.isExitSuccess);
 					this.endCallback = null;
 				}
 			}
 		};
-
 		const lines = [ ];
-		while (true) {
-			pos = this.stdoutBuffer.indexOf ("\n");
-			if (pos < 0) {
-				break;
+
+		if (this.enableStdoutData) {
+			while (true) {
+				const pos = this.stdoutBuffer.indexOf ("\n");
+				if (pos < 0) {
+					break;
+				}
+				const line = this.stdoutBuffer.substring (0, pos);
+				this.stdoutBuffer = this.stdoutBuffer.substring (pos + 1);
+				lines.push (line);
+				++(this.readLineCount);
 			}
-
-			line = this.stdoutBuffer.substring (0, pos);
-			this.stdoutBuffer = this.stdoutBuffer.substring (pos + 1);
-
-			lines.push (line);
-			++(this.readLineCount);
 		}
-
-		while (true) {
-			pos = this.stderrBuffer.indexOf ("\n");
-			if (pos < 0) {
-				break;
+		if (this.enableStderrData) {
+			while (true) {
+				const pos = this.stderrBuffer.indexOf ("\n");
+				if (pos < 0) {
+					break;
+				}
+				const line = this.stderrBuffer.substring (0, pos);
+				this.stderrBuffer = this.stderrBuffer.substring (pos + 1);
+				lines.push (line);
+				++(this.readLineCount);
 			}
-
-			line = this.stderrBuffer.substring (0, pos);
-			this.stderrBuffer = this.stderrBuffer.substring (pos + 1);
-
-			lines.push (line);
-			++(this.readLineCount);
 		}
 
 		if (lines.length <= 0) {
@@ -274,7 +262,7 @@ class ExecProcess {
 		}
 
 		this.pauseEvents ();
-		if (this.dataCallback != null) {
+		if (typeof this.dataCallback == "function") {
 			this.dataCallback (lines, () => {
 				endParse ();
 			});
@@ -289,13 +277,11 @@ class ExecProcess {
 		if (this.isEnded) {
 			return;
 		}
-
 		this.process.kill ("SIGTERM");
 		const repeatKill = () => {
 			if (this.isEnded) {
 				return;
 			}
-
 			this.process.kill ("SIGKILL");
 		};
 		setTimeout (repeatKill, StopSignalRepeatDelay);

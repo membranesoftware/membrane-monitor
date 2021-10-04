@@ -1,5 +1,5 @@
 /*
-* Copyright 2018-2020 Membrane Software <author@membranesoftware.com> https://membranesoftware.com
+* Copyright 2018-2021 Membrane Software <author@membranesoftware.com> https://membranesoftware.com
 *
 * Redistribution and use in source and binary forms, with or without
 * modification, are permitted provided that the following conditions are met:
@@ -36,23 +36,26 @@ const Path = require ("path");
 const SysUtil = require (Path.join (App.SOURCE_DIRECTORY, "SysUtil"));
 const SystemInterface = require (Path.join (App.SOURCE_DIRECTORY, "SystemInterface"));
 const RepeatTask = require (Path.join (App.SOURCE_DIRECTORY, "RepeatTask"));
-const Agent = require (Path.join (App.SOURCE_DIRECTORY, "Agent"));
+const CommandList = require (Path.join (App.SOURCE_DIRECTORY, "CommandList"));
 
-const AgentIdleTimeout = 900 * 1000; // ms
+const AgentExpireTimeout = 900 * 1000; // ms
+const CommandListExpireTimeout = 1800 * 1000; // ms
+const ExpirePeriod = 120 * 1000; // ms
 
 class AgentControl {
 	constructor () {
-		// A map of agent ID values to Agent objects
 		this.agentMap = { };
-
-		this.expireTimeout = null;
-		this.getAgentStatusTask = new RepeatTask ();
+		this.expireTask = new RepeatTask ();
+		this.getLocalStatusTask = new RepeatTask ();
+		this.commandListMap = { };
 	}
 
 	// Start the agent control's operation
-	start () {
-		this.expireAgents ();
-		this.getAgentStatusTask.setRepeating ((callback) => {
+	async start () {
+		this.expireTask.setRepeating ((callback) => {
+			this.expire (callback);
+		}, ExpirePeriod);
+		this.getLocalStatusTask.setRepeating ((callback) => {
 			const cmd = App.systemAgent.getStatus ();
 			if (cmd != null) {
 				this.updateAgentStatus (cmd);
@@ -62,83 +65,77 @@ class AgentControl {
 	}
 
 	// Stop the agent control's operation
-	stop () {
-		if (this.expireTimeout) {
-			clearTimeout (this.expireTimeout);
-			this.expireTimeout = null;
-		}
-		this.getAgentStatusTask.stop ();
+	async stop () {
+		this.expireTask.stop ();
+		this.getLocalStatusTask.stop ();
 	}
 
-	// Store data received with an AgentStatus command
-	updateAgentStatus (statusCommand) {
+	// Store data received with an AgentStatus command, with an optional targetHost value indicating the address used to get the status data
+	updateAgentStatus (statusCommand, targetHost) {
 		const agent = SysUtil.getMapItem (this.agentMap, statusCommand.params.id, () => {
 			return (new Agent ());
 		});
-		agent.updateStatus (statusCommand);
+		agent.updateStatus (statusCommand, targetHost);
 	}
 
-	// Clear expireTimeout and set it to execute expireAgents after the specified millisecond delay
-	setExpireTimeout (delay) {
-		if (this.expireTimeout) {
-			clearTimeout (this.expireTimeout);
-			this.expireTimeout = null;
-		}
-		if (delay >= 0) {
-			this.expireTimeout = setTimeout (() => {
-				this.expireAgents ();
-			}, delay);
-		}
-	}
+	// Expunge expired map records and invoke callback when complete
+	expire (callback) {
+		let keys;
 
-	// Delete idle entries from agentMap and set a timeout to repeat the operation if appropriate
-	expireAgents () {
-		let t, delta, delay;
-
-		delay = -1;
 		const now = Date.now ();
-		const keys = Object.keys (this.agentMap);
+		keys = Object.keys (this.agentMap);
 		for (const key of keys) {
 			const agent = this.agentMap[key];
-			if (agent.isInvoking || (agent.commandQueue.length > 0)) {
-				continue;
-			}
-
-			t = agent.createTime;
-			if (agent.lastStatusTime > t) {
-				t = agent.lastStatusTime;
-			}
-			if (agent.lastInvokeTime > t) {
-				t = agent.lastInvokeTime;
-			}
-
-			delta = now - t;
-			if (delta >= AgentIdleTimeout) {
+			if (agent.isIdle (AgentExpireTimeout, now)) {
 				delete this.agentMap[key];
 			}
-			else if (delta > 0) {
-				delta = AgentIdleTimeout - delta;
-				if ((delay < 0) || (delta < delay)) {
-					delay = delta;
-				}
+		}
+
+		keys = Object.keys (this.commandListMap);
+		for (const key of keys) {
+			const commandlist = this.commandListMap[key];
+			if (commandlist.isIdle (CommandListExpireTimeout, now)) {
+				delete this.commandListMap[key];
 			}
 		}
-		this.setExpireTimeout (delay);
+		process.nextTick (callback);
 	}
 
-	// Set default authorization credentials for a contacted agent
-	setAgentAuthorization (agentId, authorizePath, authorizeSecret, authorizeToken) {
-		const agent = this.agentMap[agentId];
-		if (agent == null) {
+	// Invoke a command on a target agent. If responseCommandId is provided, the response command must match that type. If the command invocation succeeds, return the response command.
+	async invokeCommand (agentId, invokePath, cmdInv, responseCommandId) {
+		if ((cmdInv === null) || (cmdInv === undefined)) {
+			throw Error (`Invalid command: ${cmdInv}`);
+		}
+		if (SystemInterface.isError (cmdInv)) {
+			throw Error (`Invalid command: ${cmdInv}`);
+		}
+		if (agentId == App.systemAgent.agentId) {
+			await App.systemAgent.invokeCommand (invokePath, cmdInv, responseCommandId);
 			return;
 		}
-		if (typeof authorizeToken != "string") {
-			authorizeToken = "";
+		const agent = this.agentMap[agentId];
+		if (agent == null) {
+			throw Error (`Unknown agent ID ${agentId}`);
 		}
+		if (agent.targetHostname == "") {
+			throw Error (`Unknown target host for agent ID ${agentId}`);
+		}
+		const commandlist = this.getCommandList (agent.targetHostname);
+		const result = await commandlist.invokeCommand (invokePath, cmdInv, responseCommandId);
+		return (result);
+	}
 
-		agent.authorizePath = authorizePath;
-		agent.authorizeSecret = authorizeSecret;
-		agent.authorizeToken = authorizeToken;
+	// Invoke a command on the host specified in a SystemInterface AgentHost object. If responseCommandId is provided, the response command must match that type. If the command invocation succeeds, return the response command.
+	async invokeHostCommand (targetHost, invokePath, cmdInv, responseCommandId) {
+		if ((cmdInv === null) || (cmdInv === undefined)) {
+			throw Error (`Invalid command: ${cmdInv}`);
+		}
+		if (SystemInterface.isError (cmdInv)) {
+			throw Error (`Invalid command: ${cmdInv}`);
+		}
+		const commandlist = this.getCommandList (targetHost);
+		const result = await commandlist.invokeCommand (invokePath, cmdInv, responseCommandId);
+		return (result);
 	}
 
 	// Return an array containing contacted agents that cause the provided predicate function to generate a true value
@@ -149,8 +146,24 @@ class AgentControl {
 				m.push (agent);
 			}
 		}
-
 		return (m);
+	}
+
+	// Return the first agent matching the provided predicate function, or null if no agent was found
+	findAgent (matchFunction) {
+		const agents = this.findAgents (matchFunction);
+		if (agents.length > 0) {
+			return (agents[0]);
+		}
+		return (null);
+	}
+
+	// Return the first agent matching the provided string hostname or SystemInterface AgentHost object, or null if no agent was found
+	findHostAgent (targetHost) {
+		const hostname = (typeof targetHost == "string") ? targetHost : targetHost.hostname;
+		return (this.findAgent ((agent) => {
+			return (agent.targetHostname == hostname);
+		}));
 	}
 
 	// Return the Agent object associated with the local system agent
@@ -160,74 +173,105 @@ class AgentControl {
 		}));
 	}
 
-	// Return a promise that invokes a command on an agent. If responseCommandId is provided, the response command must match that type. If authorization values are provided, apply them to cmdInv as needed. If the command invocation succeeds, resolve with the response command.
-	invokeCommand (agentId, invokePath, cmdInv, responseCommandId, authorizePath, authorizeSecret, authorizeToken) {
-		if (SystemInterface.isError (cmdInv)) {
-			return (Promise.reject (Error (`Invalid command: ${cmdInv}`)));
+	// Return the CommandList object for a string hostname or SystemInterface AgentHost object, creating it if needed
+	getCommandList (targetHost) {
+		let host;
+
+		if (typeof targetHost == "string") {
+			host = {
+				hostname: targetHost
+			};
 		}
-		if (agentId == App.systemAgent.agentId) {
-			return (App.systemAgent.invokeCommand (invokePath, cmdInv, responseCommandId));
+		else {
+			host = targetHost;
 		}
 
-		const agent = this.agentMap[agentId];
-		if (agent == null) {
-			return (Promise.reject (Error (`Unknown agent ID ${agentId}`)));
-		}
-
-		return (new Promise ((resolve, reject) => {
-			this.setExpireTimeout (0);
-			agent.invokeCommand (invokePath, cmdInv, responseCommandId, authorizePath, authorizeSecret, authorizeToken).then ((responseCommand) => {
-				resolve (responseCommand);
-			}).catch ((err) => {
-				reject (err);
-			}).then (() => {
-				this.setExpireTimeout (0);
-			});
+		return (SysUtil.getMapItem (this.commandListMap, host.hostname, () => {
+			return (new CommandList (host));
 		}));
 	}
 
-	// Return a promise that invokes a command on the host specified in a SystemInterface AgentHost object. If responseCommandId is provided, the response command must match that type. If the command invocation succeeds, resolve with the response command.
-	invokeHostCommand (targetHost, invokePath, cmdInv, responseCommandId) {
-		let hostname, port, targetagent;
-
-		hostname = targetHost.hostname;
-		port = SystemInterface.Constant.DefaultTcpPort1;
-		const matches = hostname.match (/^([a-zA-Z0-9-.]+):([0-9]+)$/);
-		if (Array.isArray (matches)) {
-			hostname = matches[1];
-			port = +(matches[2]);
-			if (isNaN (port)) {
-				port = SystemInterface.Constant.DefaultTcpPort1;
-			}
+	// Return a TargetHost object containing any stored authorization fields for a string hostname or SystemInterface AgentHost object
+	getHostAuthorization (targetHost) {
+		const hostname = (typeof targetHost == "string") ? targetHost : targetHost.hostname;
+		const commandlist = this.commandListMap[hostname];
+		if (commandlist != null) {
+			return (commandlist.targetHost);
 		}
-
-		const agents = this.findAgents ((agent) => {
-			return ((agent.urlHostname == hostname) && (agent.tcpPort1 == port));
+		return ({
+			hostname: hostname,
+			authorizeSecret: "",
+			authorizePath: "",
+			authorizeToken: ""
 		});
-		if (agents.length > 0) {
-			targetagent = agents[0];
-		}
-		else {
-			const key = `${hostname}:${port}`;
-			targetagent = SysUtil.getMapItem (this.agentMap, key, () => {
-				const agent = new Agent ();
-				agent.urlHostname = hostname;
-				agent.tcpPort1 = port;
-
-				return (agent);
-			});
-		}
-
-		return (new Promise ((resolve, reject) => {
-			this.setExpireTimeout (0);
-			targetagent.invokeCommand (invokePath, cmdInv, responseCommandId, (typeof targetHost.authorizePath == "string") ? targetHost.authorizePath : "", (typeof targetHost.authorizeSecret == "string") ? targetHost.authorizeSecret : "", (typeof targetHost.authorizeToken == "string") ? targetHost.authorizeToken : "").then ((responseCommand) => {
-				resolve (responseCommand);
-			}).catch ((err) => {
-				reject (err);
-			}).then (() => {
-				this.setExpireTimeout (0);
-			});
-		}));
 	}
 }
 module.exports = AgentControl;
+
+class Agent {
+	constructor () {
+		// Read-only data members
+		this.createTime = Date.now ();
+		this.targetHostname = "";
+		this.agentId = "";
+		this.version = "";
+		this.uptime = "";
+		this.displayName = "";
+		this.applicationName = "";
+		this.urlHostname = "";
+		this.udpPort = 0;
+		this.tcpPort1 = 0;
+		this.tcpPort2 = 0;
+		this.runCount = 0;
+		this.maxRunCount = 0;
+		this.isEnabled = false;
+		this.linkPath = "";
+		this.lastStatus = { };
+		this.lastStatusTime = 0;
+		this.lastInvokeTime = 0;
+	}
+
+	// Return a string representation of the agent
+	toString () {
+		return (`<Agent id=${this.agentId} targetHostname=${this.targetHostname} displayName=${this.displayName} urlHostname=${this.urlHostname} version=${this.version} linkPath=${this.linkPath} runCount=${this.runCount}/${this.maxRunCount} lastStatusTime=${this.lastStatusTime} lastInvokeTime=${this.lastInvokeTime}>`);
+	}
+
+	// Update status with fields from an AgentStatus command, with an optional targetHost value indicating the address used to get the status data
+	updateStatus (statusCommand, targetHost) {
+		this.lastStatus = statusCommand.params;
+		this.lastStatusTime = Date.now ();
+
+		this.agentId = statusCommand.params.id;
+		this.version = statusCommand.params.version;
+		this.uptime = statusCommand.params.uptime;
+		this.displayName = statusCommand.params.displayName;
+		this.applicationName = statusCommand.params.applicationName;
+		this.urlHostname = statusCommand.params.urlHostname;
+		this.udpPort = statusCommand.params.udpPort;
+		this.tcpPort1 = statusCommand.params.tcpPort1;
+		this.tcpPort2 = statusCommand.params.tcpPort2;
+		this.linkPath = statusCommand.params.linkPath;
+		this.runCount = statusCommand.params.runCount;
+		this.maxRunCount = statusCommand.params.maxRunCount;
+		this.isEnabled = statusCommand.params.isEnabled;
+
+		if ((typeof targetHost == "object") && (targetHost != null)) {
+			this.targetHostname = targetHost.hostname;
+		}
+	}
+
+	// Return a boolean value indicating if the agent is idle according to a millisecond timeout
+	isIdle (timeout, referenceTime) {
+		if (typeof referenceTime != "number") {
+			referenceTime = Date.now ();
+		}
+
+		if ((referenceTime - this.lastStatusTime) < timeout) {
+			return (false);
+		}
+		if ((referenceTime - this.lastInvokeTime) < timeout) {
+			return (false);
+		}
+		return (true);
+	}
+}

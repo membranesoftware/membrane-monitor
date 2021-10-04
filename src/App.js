@@ -1,5 +1,5 @@
 /*
-* Copyright 2018-2020 Membrane Software <author@membranesoftware.com> https://membranesoftware.com
+* Copyright 2018-2021 Membrane Software <author@membranesoftware.com> https://membranesoftware.com
 *
 * Redistribution and use in source and binary forms, with or without
 * modification, are permitted provided that the following conditions are met:
@@ -33,7 +33,9 @@
 
 const Path = require ("path");
 
-exports.VERSION = "25-stable-4d1bb9a6";
+exports.APPLICATION_NAME = "Membrane Monitor";
+exports.APPLICATION_PACKAGE_NAME = "MembraneMonitor";
+exports.VERSION = "29-stable-e9248737";
 exports.AGENT_PLATFORM = "";
 
 exports.BASE_DIRECTORY = process.cwd ();
@@ -57,18 +59,14 @@ exports.AuthorizePath = "auth";
 exports.AuthorizeSecret = "";
 exports.AuthorizeTokenLength = 64;
 exports.AuthorizeSessionDuration = 60000; // milliseconds
+exports.InvokeServerName = "";
 exports.MaxTaskCount = 1;
 exports.OpensslPath = "";
-exports.MongodPath = "/usr/bin/mongod";
-exports.StorePort = 27017;
-exports.StoreDatabase = "membrane";
-exports.StoreCollection = "records";
-exports.StoreHost = "127.0.0.1";
-exports.StoreUsername = "";
-exports.StorePassword = "";
-exports.StoreRunPeriod = 60; // seconds
 exports.Language = "";
 
+exports.IsWindows = Array.isArray (exports.AGENT_PLATFORM.match (/^win/i));
+exports.IsLinux = (process.platform === "linux");
+exports.IsMacos = (process.platform === "darwin");
 exports.ApplicationNewsUrl = "https://membranesoftware.com/application-news/";
 exports.IntentWritePeriod = 300; // seconds
 exports.HeartbeatPeriod = 500; // milliseconds
@@ -86,6 +84,7 @@ exports.StreamThumbnailPath = "thumbnail";
 exports.StreamHlsIndexFilename = "index.m3u8";
 exports.StreamDashDescriptionFilename = "vod.mpd";
 exports.StreamRecordFilename = "record";
+exports.StreamReferencePath = "ref";
 exports.CameraCachePath = "camera-cache";
 
 global.App = exports;

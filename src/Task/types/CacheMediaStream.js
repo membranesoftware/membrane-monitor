@@ -1,5 +1,5 @@
 /*
-* Copyright 2018-2020 Membrane Software <author@membranesoftware.com> https://membranesoftware.com
+* Copyright 2018-2021 Membrane Software <author@membranesoftware.com> https://membranesoftware.com
 *
 * Redistribution and use in source and binary forms, with or without
 * modification, are permitted provided that the following conditions are met:
@@ -30,12 +30,11 @@
 "use strict";
 
 const App = global.App || { };
-const Fs = require ("fs");
 const Path = require ("path");
-const Url = require ("url");
 const Log = require (Path.join (App.SOURCE_DIRECTORY, "Log"));
 const SystemInterface = require (Path.join (App.SOURCE_DIRECTORY, "SystemInterface"));
 const FsUtil = require (Path.join (App.SOURCE_DIRECTORY, "FsUtil"));
+const StringUtil = require (Path.join (App.SOURCE_DIRECTORY, "StringUtil"));
 const HlsIndexParser = require (Path.join (App.SOURCE_DIRECTORY, "HlsIndexParser"));
 const TaskBase = require (Path.join (App.SOURCE_DIRECTORY, "Task", "TaskBase"));
 
@@ -43,14 +42,19 @@ class CacheMediaStream extends TaskBase {
 	constructor () {
 		super ();
 		this.name = App.uiText.getText ("CacheMediaStreamTaskName");
-		this.resultObjectType = "StreamItem";
 
 		this.configureParams = [
+			{
+				name: "cacheStreamId",
+				type: "string",
+				flags: SystemInterface.ParamFlag.Required | SystemInterface.ParamFlag.NotEmpty | SystemInterface.ParamFlag.Uuid,
+				description: "The ID to use for the created stream"
+			},
 			{
 				name: "streamId",
 				type: "string",
 				flags: SystemInterface.ParamFlag.Required | SystemInterface.ParamFlag.NotEmpty | SystemInterface.ParamFlag.Uuid,
-				description: "The ID to use for the created stream"
+				description: "The ID of the source stream"
 			},
 			{
 				name: "streamUrl",
@@ -111,187 +115,115 @@ class CacheMediaStream extends TaskBase {
 
 		this.streamDataPath = "";
 		this.baseUrl = "";
-		this.manifestUrl = "";
 		this.progressPercentDelta = 1;
-		this.cacheStreamId = "";
 	}
 
 	// Subclass method. Implementations should execute actions appropriate when the task has been successfully configured.
 	doConfigure () {
-		this.cacheStreamId = App.systemAgent.getUuid (SystemInterface.CommandId.StreamItem);
 		this.subtitle = this.configureMap.streamName;
-		this.statusMap.cacheStreamId = this.cacheStreamId;
 		this.statusMap.streamId = this.configureMap.streamId;
 		this.statusMap.streamName = this.configureMap.streamName;
-		this.streamDataPath = Path.join (this.configureMap.dataPath, this.cacheStreamId);
+		this.streamDataPath = Path.join (this.configureMap.dataPath, this.configureMap.cacheStreamId);
 	}
 
 	// Subclass method. Implementations should execute task actions and call end when complete.
 	doRun () {
-		// TODO: Check isCancelled at each step
-
-		FsUtil.createDirectory (this.configureMap.dataPath).then (() => {
-			return (FsUtil.createDirectory (this.streamDataPath));
-		}).then (() => {
-			return (FsUtil.createDirectory (Path.join (this.streamDataPath, App.StreamHlsPath)));
-		}).then (() => {
-			return (FsUtil.createDirectory (Path.join (this.streamDataPath, App.StreamThumbnailPath)));
-		}).then (() => {
-			const url = Url.parse (this.configureMap.streamUrl);
-			if (url == null) {
-				return (Promise.reject (Error ("Invalid stream URL")));
-			}
-			this.baseUrl = `${url.protocol}${App.DoubleSlash}${url.hostname}:${url.port}`;
-
-			const playcmd = App.systemAgent.createCommand ("GetHlsManifest", SystemInterface.Constant.Stream, {
-				streamId: this.configureMap.streamId
-			});
-			if (playcmd == null) {
-				return (Promise.reject (Error ("Failed to create GetHlsManifest command")));
-			}
-			this.manifestUrl = `${this.configureMap.streamUrl}?${SystemInterface.Constant.UrlQueryParameter}=${encodeURIComponent (JSON.stringify (playcmd))}`;
-
-			return (App.systemAgent.fetchUrlData (this.manifestUrl));
-		}).then ((urlData) => {
-			this.setPercentComplete (1);
-			return (this.fetchSegmentFiles (urlData));
-		}).then (() => {
-			this.setPercentComplete (100);
-			this.isSuccess = true;
-		}).catch ((err) => {
-			Log.debug (`${this.toString ()} failed; err=${err}`);
+		this.cacheStream ().catch ((err) => {
+			Log.err (`Failed to cache stream; streamName="${this.configureMap.streamName}" err=${err}`);
 		}).then (() => {
 			this.end ();
 		});
 	}
 
-	// Return a promise that fetches all segment files referenced in the provided HLS index data and stores the resulting base index file
-	fetchSegmentFiles (hlsIndexData) {
-		return (new Promise ((resolve, reject) => {
-			let segmentindex;
+	async cacheStream () {
+		const url = StringUtil.parseUrl (this.configureMap.streamUrl);
+		if (url == null) {
+			throw Error ("Invalid stream URL");
+		}
+		await FsUtil.createDirectory (this.configureMap.dataPath);
+		await FsUtil.createDirectory (this.streamDataPath);
+		await FsUtil.createDirectory (Path.join (this.streamDataPath, App.StreamHlsPath));
+		await FsUtil.createDirectory (Path.join (this.streamDataPath, App.StreamThumbnailPath));
 
-			const hls = HlsIndexParser.parse (hlsIndexData);
-			if ((hls == null) || (hls.segmentCount <= 0)) {
-				reject (Error ("Failed to parse stream index data"));
-				return;
-			}
-
-			this.progressPercentDelta = (99 / hls.segmentCount);
-			const recordparams = {
-				id: this.cacheStreamId,
-				name: this.configureMap.streamName,
-				sourceId: this.configureMap.streamId,
-				duration: this.configureMap.duration,
-				width: this.configureMap.width,
-				height: this.configureMap.height,
-				bitrate: this.configureMap.bitrate,
-				frameRate: this.configureMap.frameRate,
-				size: 0,
-				segmentCount: hls.segmentCount,
-				hlsTargetDuration: hls.hlsTargetDuration,
-				segmentFilenames: [ ],
-				segmentLengths: hls.segmentLengths,
-				segmentPositions: hls.segmentPositions
-			};
-			const segmenturls = [ ];
-			segmentindex = 0;
-			for (const file of hls.segmentFilenames) {
-				segmenturls.push (file);
-				recordparams.segmentFilenames.push (`${segmentindex}.ts`);
-				++segmentindex;
-			}
-
-			recordparams.segmentCount = segmenturls.length;
-
-			setTimeout (() => {
-				segmentindex = -1;
-				fetchNextSegment ();
-			}, 0);
-			const fetchNextSegment = () => {
-				++segmentindex;
-				if (segmentindex >= segmenturls.length) {
-					writeRecordFile ();
-					return;
-				}
-
-				App.systemAgent.fetchUrlFile (this.baseUrl + segmenturls[segmentindex], Path.join (this.streamDataPath, App.StreamHlsPath), `${segmentindex}.ts`, fetchSegmentComplete);
-			};
-			const fetchSegmentComplete = (err, destFilename) => {
-				if (err != null) {
-					reject (err);
-					return;
-				}
-
-				Fs.stat (destFilename, statSegmentComplete);
-			};
-			const statSegmentComplete = (err, stats) => {
-				if (err != null) {
-					reject (err);
-					return;
-				}
-				if (stats != null) {
-					recordparams.size += stats.size;
-				}
-
-				const cmd = App.systemAgent.createCommand ("GetThumbnailImage", SystemInterface.Constant.Stream, {
-					id: this.configureMap.streamId,
-					thumbnailIndex: segmentindex
-				});
-				if (cmd == null) {
-					reject (Error ("Failed to create GetThumbnailImage command"));
-					return;
-				}
-				const url = `${this.configureMap.thumbnailUrl}?${SystemInterface.Constant.UrlQueryParameter}=${encodeURIComponent (JSON.stringify (cmd))}`;
-				App.systemAgent.fetchUrlFile (url, Path.join (this.streamDataPath, App.StreamThumbnailPath), `${segmentindex}.jpg`, fetchThumbnailComplete);
-			};
-			const fetchThumbnailComplete = (err, destFilename) => {
-				if (err != null) {
-					reject (err);
-					return;
-				}
-
-				Fs.stat (destFilename, statThumbnailComplete);
-			};
-			const statThumbnailComplete = (err, stats) => {
-				if (err != null) {
-					reject (err);
-					return;
-				}
-				if (stats != null) {
-					recordparams.size += stats.size;
-				}
-
-				this.addPercentComplete (this.progressPercentDelta);
-				fetchNextSegment ();
-			};
-			const writeRecordFile = () => {
-				const record = App.systemAgent.createCommand ("StreamItem", SystemInterface.Constant.Stream, recordparams);
-				if (record == null) {
-					reject (Error ("Failed to create StreamItem record"));
-					return;
-				}
-
-				this.resultObject = record.params;
-				FsUtil.writeFile (Path.join (this.streamDataPath, App.StreamRecordFilename), JSON.stringify (record), null, writeRecordFileComplete);
-			};
-			const writeRecordFileComplete = (err) => {
-				if (err != null) {
-					reject (err);
-					return;
-				}
-
-				resolve ();
-			};
-		}));
+		this.baseUrl = `${url.protocol}${App.DoubleSlash}${url.hostname}:${url.port}`;
+		const playcmd = App.systemAgent.createCommand ("GetHlsManifest", {
+			streamId: this.configureMap.streamId
+		});
+		if (playcmd == null) {
+			throw Error ("Failed to create GetHlsManifest command");
+		}
+		const manifest = await App.systemAgent.fetchUrlData (`${this.configureMap.streamUrl}?${SystemInterface.Constant.UrlQueryParameter}=${encodeURIComponent (JSON.stringify (playcmd))}`);
+		this.setPercentComplete (1);
+		await this.fetchSegmentFiles (manifest);
+		this.setPercentComplete (100);
+		this.isSuccess = true;
 	}
 
-	// Subclass method. Implementations should execute task actions and call end when complete.
+	// Fetch all segment files referenced in the provided HLS index data and store the resulting base index file
+	async fetchSegmentFiles (hlsIndexData) {
+		let segmentindex, stats, desturl, destfile;
+
+		const hls = HlsIndexParser.parse (hlsIndexData);
+		if ((hls == null) || (hls.segmentCount <= 0)) {
+			throw Error ("Failed to parse stream index data");
+		}
+		this.progressPercentDelta = (99 / hls.segmentCount);
+		const recordparams = {
+			id: this.configureMap.cacheStreamId,
+			name: this.configureMap.streamName,
+			sourceId: this.configureMap.streamId,
+			duration: this.configureMap.duration,
+			width: this.configureMap.width,
+			height: this.configureMap.height,
+			bitrate: this.configureMap.bitrate,
+			frameRate: this.configureMap.frameRate,
+			size: 0,
+			segmentCount: hls.segmentCount,
+			hlsTargetDuration: hls.hlsTargetDuration,
+			segmentFilenames: [ ],
+			segmentLengths: hls.segmentLengths,
+			segmentPositions: hls.segmentPositions
+		};
+
+		segmentindex = 0;
+		for (const file of hls.segmentFilenames) {
+			desturl = `${this.baseUrl}${file}`;
+			destfile = await App.systemAgent.fetchUrlFile (desturl, Path.join (this.streamDataPath, App.StreamHlsPath), `${segmentindex}.ts`);
+			stats = await FsUtil.statFile (destfile);
+			recordparams.size += stats.size;
+
+			const cmd = App.systemAgent.createCommand ("GetThumbnailImage", {
+				id: this.configureMap.streamId,
+				thumbnailIndex: segmentindex
+			});
+			if (cmd == null) {
+				throw Error ("Failed to create GetThumbnailImage command");
+			}
+			desturl = `${this.configureMap.thumbnailUrl}?${SystemInterface.Constant.UrlQueryParameter}=${encodeURIComponent (JSON.stringify (cmd))}`;
+			destfile = await App.systemAgent.fetchUrlFile (desturl, Path.join (this.streamDataPath, App.StreamThumbnailPath), `${segmentindex}.jpg`);
+			stats = await FsUtil.statFile (destfile);
+			recordparams.size += stats.size;
+			this.addPercentComplete (this.progressPercentDelta);
+			recordparams.segmentFilenames.push (`${segmentindex}.ts`);
+			++segmentindex;
+		}
+
+		const record = App.systemAgent.createCommand ("StreamItem", recordparams);
+		if (record == null) {
+			throw Error ("Failed to create StreamItem record");
+		}
+		await FsUtil.writeFile (Path.join (this.streamDataPath, App.StreamRecordFilename), JSON.stringify (record));
+	}
+
+	// Subclass method. Implementations should execute actions appropriate when the task has ended.
 	doEnd () {
 		if (this.isSuccess && (! this.isCancelled)) {
 			return;
 		}
-
 		FsUtil.removeDirectory (this.streamDataPath, (err) => {
+			if (err != null) {
+				Log.debug (`${this.toString ()} failed to remove data directory; streamDataPath=${this.streamDataPath} err=${err}`);
+			}
 		});
 	}
 }

@@ -1,5 +1,5 @@
 /*
-* Copyright 2018-2020 Membrane Software <author@membranesoftware.com> https://membranesoftware.com
+* Copyright 2018-2021 Membrane Software <author@membranesoftware.com> https://membranesoftware.com
 *
 * Redistribution and use in source and binary forms, with or without
 * modification, are permitted provided that the following conditions are met:
@@ -31,23 +31,31 @@
 
 const App = global.App || { };
 const Path = require ("path");
-const Result = require (Path.join (App.SOURCE_DIRECTORY, "Result"));
 const Log = require (Path.join (App.SOURCE_DIRECTORY, "Log"));
 const SystemInterface = require (Path.join (App.SOURCE_DIRECTORY, "SystemInterface"));
 const IntentBase = require (Path.join (App.SOURCE_DIRECTORY, "Intent", "IntentBase"));
 
-const AgentCommandWaitPeriod = 7000; // milliseconds
+const MinRestingPeriod = 15000; // milliseconds
+const CountdownTime = 20000; // milliseconds
+
+// Stage names
+const Initializing = "initializing";
+const ShowingUrl = "showingUrl";
+const Resting = "resting";
 
 class WebDisplayIntent extends IntentBase {
 	constructor () {
 		super ();
-		this.name = "WebDisplayIntent";
-		this.displayName = "Track websites";
+		this.displayName = App.uiText.getText ("WebDisplayIntentName");
 		this.stateType = "WebDisplayIntentState";
 		this.isDisplayIntent = true;
+		this.lastCommandTime = 0;
+		this.nextCommandTime = 0;
+		this.isCountdownShown = false;
+		this.monitorStatus = { };
 	}
 
-	// Configure the intent's state using values in the provided params object and return a Result value
+	// Configure the intent's state using values in the provided params object
 	doConfigure (configParams) {
 		if (this.isStringArray (configParams.urls)) {
 			this.state.urls = configParams.urls;
@@ -65,11 +73,9 @@ class WebDisplayIntent extends IntentBase {
 				this.state.maxItemDisplayDuration = configParams.maxItemDisplayDuration;
 			}
 		}
-
-		return (Result.Success);
 	}
 
-	// Perform actions appropriate when the intent becomes active
+	// Execute actions appropriate when the intent becomes active
 	doStart () {
 		if (! Array.isArray (this.state.urls)) {
 			this.state.urls = [ ];
@@ -83,73 +89,94 @@ class WebDisplayIntent extends IntentBase {
 		if (typeof this.state.minItemDisplayDuration != "number") {
 			this.state.minItemDisplayDuration = 300;
 		}
+		else {
+			if (this.state.minItemDisplayDuration < 1) {
+				this.state.minItemDisplayDuration = 1;
+			}
+		}
 		if (typeof this.state.maxItemDisplayDuration != "number") {
 			this.state.maxItemDisplayDuration = 900;
+		}
+		else {
+			if (this.state.maxItemDisplayDuration < 1) {
+				this.state.maxItemDisplayDuration = 1;
+			}
 		}
 
 		this.lastCommandTime = 0;
 		this.nextCommandTime = 0;
+		this.isCountdownShown = false;
+		this.monitorStatus = { };
 	}
 
-	// Perform actions appropriate for the current state of the application
+	// Execute actions appropriate for the current state of the application
 	doUpdate () {
-		let show, url;
-
 		if (this.state.urls.length <= 0) {
+			this.clearStage ();
 			return;
 		}
 		if (! this.isDisplayConditionActive) {
+			this.clearStage ();
 			return;
 		}
-		if (! this.hasTimeElapsed (this.lastCommandTime, AgentCommandWaitPeriod)) {
-			return;
-		}
-
-		const agent = App.systemAgent.agentControl.getLocalAgent ();
-		const monitorstatus = agent.lastStatus.monitorServerStatus;
+		const monitorstatus = App.systemAgent.agentControl.getLocalAgent ().lastStatus.monitorServerStatus;
 		if ((typeof monitorstatus != "object") || (monitorstatus == null)) {
+			this.clearStage ();
 			return;
 		}
-		if (! monitorstatus.isShowUrlAvailable) {
-			return;
+		this.monitorStatus = monitorstatus;
+		if (this.stage == "") {
+			this.setStage (Initializing);
 		}
+	}
 
-		show = false;
-		if (monitorstatus.displayState !== SystemInterface.Constant.ShowUrlDisplayState) {
-			show = true;
-		}
-		if (! show) {
-			if ((this.state.minItemDisplayDuration > 0) && (this.state.maxItemDisplayDuration > 0)) {
-				if (this.updateTime >= this.nextCommandTime) {
-					show = true;
-				}
-			}
-		}
-		if (! show) {
+	// Stage methods
+	initializing () {
+		if (this.monitorStatus.isShowUrlAvailable !== true) {
 			return;
 		}
+		this.setStage (ShowingUrl);
+	}
 
-		if (this.state.isShuffle) {
-			url = this.getRandomChoice (this.state.urls, this.state.urlChoices);
-		}
-		else {
-			url = this.getSequentialChoice (this.state.urls, this.state.urlChoices);
-		}
+	showingUrl () {
+		const url = this.state.isShuffle ?
+			this.getRandomChoice (this.state.urls, this.state.urlChoices) :
+			this.getSequentialChoice (this.state.urls, this.state.urlChoices);
 		if (typeof url != "string") {
 			return;
 		}
-
-		const cmd = App.systemAgent.createCommand ("ShowWebUrl", SystemInterface.Constant.Monitor, { url: url });
-		if (cmd == null) {
-			return;
-		}
-		App.systemAgent.agentControl.invokeCommand (App.systemAgent.agentId, SystemInterface.Constant.DefaultInvokePath, cmd, SystemInterface.CommandId.CommandResult).catch ((err) => {
+		App.systemAgent.agentControl.invokeCommand (App.systemAgent.agentId, SystemInterface.Constant.DefaultInvokePath, App.systemAgent.createCommand ("ShowWebUrl", { url: url }), SystemInterface.CommandId.CommandResult).catch ((err) => {
 			Log.debug (`${this.toString ()} failed to invoke ShowWebUrl; err=${err}`);
 		});
 
 		this.lastCommandTime = this.updateTime;
-		if ((this.state.minItemDisplayDuration > 0) && (this.state.maxItemDisplayDuration > 0)) {
-			this.nextCommandTime = this.updateTime + this.prng.getRandomInteger (this.state.minItemDisplayDuration * 1000, this.state.maxItemDisplayDuration * 1000);
+		this.nextCommandTime = this.updateTime + App.systemAgent.getRandomInteger (this.state.minItemDisplayDuration * 1000, this.state.maxItemDisplayDuration * 1000);
+		this.isCountdownShown = false;
+		this.setStage (Resting);
+	}
+
+	resting () {
+		if (! this.hasTimeElapsed (this.lastCommandTime, MinRestingPeriod)) {
+			return;
+		}
+		if (this.monitorStatus.displayState !== SystemInterface.Constant.ShowUrlDisplayState) {
+			this.setStage (ShowingUrl);
+			return;
+		}
+		if (this.updateTime >= this.nextCommandTime) {
+			this.setStage (ShowingUrl);
+			return;
+		}
+		if (! this.isCountdownShown) {
+			if (this.updateTime >= (this.nextCommandTime - CountdownTime)) {
+				this.isCountdownShown = true;
+				const t = this.nextCommandTime - Date.now ();
+				App.systemAgent.agentControl.invokeCommand (App.systemAgent.agentId, SystemInterface.Constant.DefaultInvokePath, App.systemAgent.createCommand ("ShowDesktopCountdown", {
+					countdownTime: (t > 0) ? t : CountdownTime
+				}), SystemInterface.CommandId.CommandResult).catch ((err) => {
+					Log.debug (`${this.toString ()} failed to invoke ShowDesktopCountdown; err=${err}`);
+				});
+			}
 		}
 	}
 }

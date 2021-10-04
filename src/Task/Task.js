@@ -1,5 +1,5 @@
 /*
-* Copyright 2018-2020 Membrane Software <author@membranesoftware.com> https://membranesoftware.com
+* Copyright 2018-2021 Membrane Software <author@membranesoftware.com> https://membranesoftware.com
 *
 * Redistribution and use in source and binary forms, with or without
 * modification, are permitted provided that the following conditions are met:
@@ -31,28 +31,22 @@
 
 "use strict";
 
-const App = global.App || { };
-const Path = require ("path");
-const Result = require (Path.join (App.SOURCE_DIRECTORY, "Result"));
 const TaskTypes = require ("./types");
 
 exports.TaskTypes = TaskTypes;
 
-// Create a new task of the specified type name and configure it with the provided parameters object. Returns null if the task could not be created, indicating that the type name was not found or the configuration was not valid.
+// Return a new task of the specified type name that has been configured with the provided parameters object
 exports.createTask = (typeName, configureParams) => {
 	const tasktype = TaskTypes[typeName];
 	if (tasktype == null) {
-		return (null);
+		throw Error (`Unknown task type ${typeName}`);
 	}
 
 	const task = new tasktype ();
 	if ((typeof configureParams != "object") || (configureParams == null)) {
 		configureParams = { };
 	}
-	if (task.configure (configureParams) != Result.Success) {
-		return (null);
-	}
-
+	task.configure (configureParams);
 	return (task);
 };
 

@@ -1,5 +1,5 @@
 /*
-* Copyright 2018-2020 Membrane Software <author@membranesoftware.com> https://membranesoftware.com
+* Copyright 2018-2021 Membrane Software <author@membranesoftware.com> https://membranesoftware.com
 *
 * Redistribution and use in source and binary forms, with or without
 * modification, are permitted provided that the following conditions are met:
@@ -61,12 +61,36 @@ const RunBrowserProcessPeriod = 1000; // milliseconds
 const FindBrowserProcessPeriod = 15000; // milliseconds
 const GetDiskSpacePeriod = 15 * 60 * 1000; // milliseconds
 const ClearCompleteEvent = "clearComplete";
+const SurfaceEndEvent = "surfaceEnd";
 const ImageFilenamePrefix = "img_";
+
+const MonitorInvokeCommandNames = [
+	"ClearDisplay",
+	"PlayMedia",
+	"PauseMedia",
+	"PlayCacheStream",
+	"CreateCacheStream",
+	"RemoveStream",
+	"ClearCache",
+	"ShowWebUrl",
+	"ShowCameraImage",
+	"PlayCameraStream",
+	"CreateWebDisplayIntent",
+	"CreateMediaDisplayIntent",
+	"CreateStreamCacheDisplayIntent",
+	"CreateCameraDisplayIntent",
+	"CreateMonitorProgram",
+	"ShowDesktopCountdown"
+];
+const SurfaceInvokeCommandNames = [
+	"PlayAnimation",
+	"ShowColorFillBackground"
+];
 
 class MonitorServer extends ServerBase {
 	constructor () {
 		super ();
-		this.name = "MonitorServer";
+		this.setName ("MonitorServer");
 		this.description = "Accept and execute commands to control content shown by a display";
 
 		this.configureParams = [
@@ -109,6 +133,8 @@ class MonitorServer extends ServerBase {
 		this.usedStorage = 0; // bytes
 		this.getDiskSpaceTask = new RepeatTask ();
 		this.cacheDataPath = Path.join (App.DATA_DIRECTORY, App.StreamCachePath);
+		this.streamCount = 0;
+		this.cacheMtime = 0;
 
 		this.emitter = new EventEmitter ();
 		this.emitter.setMaxListeners (0);
@@ -116,154 +142,81 @@ class MonitorServer extends ServerBase {
 
 		this.screenshotTask = new RepeatTask ();
 		this.screenshotTime = 0;
-
-		// A map of stream ID values to StreamItem commands
-		this.streamMap = { };
-
-		// A map of stream ID values to StreamItem commands
-		this.streamSourceMap = { };
 	}
 
-	// Start the server's operation and invoke the provided callback when complete, with an "err" parameter (non-null if an error occurred)
-	doStart (startCallback) {
+	// Execute subclass-specific start operations
+	async doStart () {
 		this.isPlayPaused = false;
 		if (this.configureMap.xDisplay.toLowerCase () == "none") {
-			Log.info (`${this.toString ()} X server commands disabled by configuration, xDisplay=none`);
+			Log.info (`${this.name} X server commands disabled by configuration, xDisplay=none`);
 		}
 		else {
 			this.xDisplay = this.configureMap.xDisplay;
 		}
 
-		FsUtil.createDirectory (this.cacheDataPath).then (() => {
-			return (Task.executeTask ("GetDiskSpace", { targetPath: this.cacheDataPath }));
-		}).then ((resultObject) => {
-			this.totalStorage = resultObject.total;
-			this.usedStorage = resultObject.used;
-			this.freeStorage = resultObject.free;
-			return (this.awaitSystemReady ());
-		}).then (() => {
-			return (this.getDisplayInfo ());
-		}).then (() => {
-			return (this.readStreamCache ());
-		}).then (() => {
-			App.systemAgent.addInvokeRequestHandler (SystemInterface.Constant.DefaultInvokePath, SystemInterface.Constant.Monitor, (cmdInv, request, response) => {
-				switch (cmdInv.command) {
-					case SystemInterface.CommandId.ClearDisplay: {
-						this.clearDisplay (cmdInv, request, response);
-						break;
-					}
-					case SystemInterface.CommandId.PlayMedia: {
-						this.playMedia (cmdInv, request, response);
-						break;
-					}
-					case SystemInterface.CommandId.PauseMedia: {
-						this.pauseMedia (cmdInv, request, response);
-						break;
-					}
-					case SystemInterface.CommandId.PlayCacheStream: {
-						this.playCacheStream (cmdInv, request, response);
-						break;
-					}
-					case SystemInterface.CommandId.CreateCacheStream: {
-						this.createCacheStream (cmdInv, request, response);
-						break;
-					}
-					case SystemInterface.CommandId.RemoveStream: {
-						this.removeStream (cmdInv, request, response);
-						break;
-					}
-					case SystemInterface.CommandId.ClearCache: {
-						this.clearCache (cmdInv, request, response);
-						break;
-					}
-					case SystemInterface.CommandId.ShowWebUrl: {
-						this.showWebUrl (cmdInv, request, response);
-						break;
-					}
-					case SystemInterface.CommandId.ShowCameraImage: {
-						this.showCameraImage (cmdInv, request, response);
-						break;
-					}
-					case SystemInterface.CommandId.PlayCameraStream: {
-						this.playCameraStream (cmdInv, request, response);
-						break;
-					}
-					case SystemInterface.CommandId.CreateWebDisplayIntent: {
-						this.createWebDisplayIntent (cmdInv, request, response);
-						break;
-					}
-					case SystemInterface.CommandId.CreateMediaDisplayIntent: {
-						this.createMediaDisplayIntent (cmdInv, request, response);
-						break;
-					}
-					case SystemInterface.CommandId.CreateStreamCacheDisplayIntent: {
-						this.createStreamCacheDisplayIntent (cmdInv, request, response);
-						break;
-					}
-					case SystemInterface.CommandId.CreateCameraDisplayIntent: {
-						this.createCameraDisplayIntent (cmdInv, request, response);
-						break;
-					}
-					case SystemInterface.CommandId.CreateMonitorProgram: {
-						this.createMonitorProgram (cmdInv, request, response);
-						break;
-					}
-					default: {
-						App.systemAgent.writeResponse (request, response, 400);
-						break;
-					}
-				}
+		await FsUtil.createDirectory (this.cacheDataPath);
+		await FsUtil.createDirectory (Path.join (this.cacheDataPath, App.StreamReferencePath));
+		const df = await Task.executeTask ("GetDiskSpace", { targetPath: this.cacheDataPath });
+		this.totalStorage = df.total;
+		this.usedStorage = df.used;
+		this.freeStorage = df.free;
+		await this.awaitSystemReady ();
+		await this.getDisplayInfo ();
+		await this.readStreamCache ();
+		this.cacheMtime = Date.now ();
+
+		for (const cmdname of MonitorInvokeCommandNames) {
+			this.addInvokeRequestHandler (SystemInterface.Constant.DefaultInvokePath, cmdname);
+		}
+		for (const cmdname of SurfaceInvokeCommandNames) {
+			App.systemAgent.addInvokeRequestHandler (SystemInterface.Constant.DefaultInvokePath, cmdname, (cmdInv, request, response) => {
+				this.commandSurfaceProcess (cmdInv).then (() => {
+					App.systemAgent.writeCommandResponse (request, response, this.createCommand ("CommandResult", {
+						success: true
+					}));
+				}).catch ((err) => {
+					Log.err (`${this.name} invoke request error; cmdname=${cmdname} err=${err}`);
+					App.systemAgent.writeCommandResponse (request, response, this.createCommand ("CommandResult", {
+						success: false
+					}));
+				});
 			});
+		}
 
-			App.systemAgent.addLinkCommandHandler (SystemInterface.Constant.Monitor, (cmdInv, client) => {
-				switch (cmdInv.command) {
-					case SystemInterface.CommandId.FindItems: {
-						this.findItems (cmdInv, client);
-						break;
-					}
-				}
-			});
+		this.addLinkCommandHandler ("FindStreamItems");
+		this.addSecondaryInvokeRequestHandler (ThumbnailPath, "GetThumbnailImage");
 
-			App.systemAgent.addSecondaryRequestHandler (ThumbnailPath, (cmdInv, request, response) => {
-				switch (cmdInv.command) {
-					case SystemInterface.CommandId.GetThumbnailImage: {
-						this.getThumbnailImage (cmdInv, request, response);
-						break;
-					}
-					default: {
-						App.systemAgent.writeResponse (request, response, 400);
-						break;
-					}
-				}
-			});
-
-			App.systemAgent.addSecondaryRequestHandler (ScreenshotPath, (cmdInv, request, response) => {
-				if (this.screenshotTime <= 0) {
-					App.systemAgent.writeResponse (request, response, 404);
-					return;
-				}
-
-				const path = Path.join (App.DATA_DIRECTORY, ScreenshotFilename);
-				App.systemAgent.writeFileResponse (request, response, path, "image/jpeg");
-			});
-
-			if (this.xDisplay != "") {
-				this.getDisplayInfoTask.setRepeating ((callback) => {
-					this.getDisplayInfo ().catch ((err) => {
-						// Do nothing
-					}).then (() => {
-						callback ();
-					});
-				}, GetDisplayInfoPeriod);
+		App.systemAgent.addSecondaryRequestHandler (ScreenshotPath, (request, response) => {
+			if (this.screenshotTime <= 0) {
+				App.systemAgent.writeResponse (request, response, 404);
+				return;
 			}
+			const path = Path.join (App.DATA_DIRECTORY, ScreenshotFilename);
+			App.systemAgent.writeFileResponse (request, response, path, "image/jpeg");
+		});
 
-			if (this.configureMap.screenshotPeriod > 0) {
-				this.screenshotTask.setRepeating ((callback) => {
-					this.captureScreenshot (callback);
-				}, this.configureMap.screenshotPeriod * 1000);
-			}
+		if (this.xDisplay != "") {
+			this.getDisplayInfoTask.setRepeating ((callback) => {
+				this.getDisplayInfo ().catch ((err) => {
+					// Do nothing
+				}).then (() => {
+					callback ();
+				});
+			}, GetDisplayInfoPeriod);
+		}
 
-			this.getDiskSpaceTask.setRepeating ((callback) => {
+		if (this.configureMap.screenshotPeriod > 0) {
+			this.screenshotTask.setRepeating ((callback) => {
+				this.captureScreenshot ().catch ((err) => {
+					Log.debug (`${this.name} failed to capture screenshot; err=${err}`);
+				}).then (() => {
+					callback ();
+				});
+			}, this.configureMap.screenshotPeriod * 1000);
+		}
+
+		this.getDiskSpaceTask.setRepeating ((callback) => {
+			App.systemAgent.taskGroup.onIdle (() => {
 				Task.executeTask ("GetDiskSpace", { targetPath: this.cacheDataPath }).then ((resultObject) => {
 					this.totalStorage = resultObject.total;
 					this.usedStorage = resultObject.used;
@@ -272,15 +225,11 @@ class MonitorServer extends ServerBase {
 				}).catch ((err) => {
 					callback ();
 				});
-			}, GetDiskSpacePeriod);
-
-			App.systemAgent.getApplicationNews ();
-			this.deactivateDesktopBlank (() => {
-				startCallback ();
 			});
-		}).catch ((err) => {
-			startCallback (err);
-		});
+		}, GetDiskSpacePeriod);
+
+		App.systemAgent.getApplicationNews ();
+		await this.deactivateDesktopBlank ();
 	}
 
 	// Return a promise that waits until the host system becomes ready to execute monitor operations
@@ -317,19 +266,17 @@ class MonitorServer extends ServerBase {
 		}));
 	}
 
-	// Return a promise that reads and stores display info values
-	getDisplayInfo () {
-		return (new Promise ((resolve, reject) => {
-			let displaywidth, displayheight;
+	// Read and store display info values
+	async getDisplayInfo () {
+		let displaywidth, displayheight;
 
-			if (this.xDisplay == "") {
-				resolve ();
-				return;
-			}
-
-			displaywidth = 0;
-			displayheight = 0;
-			App.systemAgent.runProcess (XdpyinfoProcessName, [ ], { "DISPLAY": this.xDisplay }, "", (lines, parseCallback) => {
+		if (this.xDisplay == "") {
+			return;
+		}
+		displaywidth = 0;
+		displayheight = 0;
+		try {
+			await App.systemAgent.runProcess (XdpyinfoProcessName, [ ], { "DISPLAY": this.xDisplay }, "", (lines, parseCallback) => {
 				for (const line of lines) {
 					const m = line.match (/dimensions:.*?([0-9]+)x([0-9]+)[^0-9]/);
 					if (m != null) {
@@ -338,113 +285,106 @@ class MonitorServer extends ServerBase {
 					}
 				}
 				process.nextTick (parseCallback);
-			}).then ((isExitSuccess) => {
-				if ((displaywidth <= 0) || (displayheight <= 0)) {
-					this.isShowUrlAvailable = false;
-				}
-				else {
-					if ((displaywidth != this.displayWidth) || (displayheight != this.displayHeight)) {
-						Log.debug (`${this.toString ()} xDisplay=${this.xDisplay} displayWidth=${displaywidth} displayHeight=${displayheight}`);
-					}
-					this.displayWidth = displaywidth;
-					this.displayHeight = displayheight;
-					this.isShowUrlAvailable = true;
-				}
-				resolve ();
-			}).catch ((err) => {
-				Log.debug (`Error reading display info; err=${err}`);
-				this.isShowUrlAvailable = false;
-				resolve ();
 			});
-		}));
+			if ((displaywidth <= 0) || (displayheight <= 0)) {
+				this.isShowUrlAvailable = false;
+			}
+			else {
+				if ((displaywidth != this.displayWidth) || (displayheight != this.displayHeight)) {
+					Log.debug (`${this.name} xDisplay=${this.xDisplay} displayWidth=${displaywidth} displayHeight=${displayheight}`);
+				}
+				this.displayWidth = displaywidth;
+				this.displayHeight = displayheight;
+				this.isShowUrlAvailable = true;
+			}
+		}
+		catch (err) {
+			Log.debug (`Error reading display info; err=${err}`);
+			this.isShowUrlAvailable = false;
+		}
 	}
 
-	// Return a promise that reads stream records from the cache
-	readStreamCache () {
-		return (new Promise ((resolve, reject) => {
-			let idindex, streampath, streamrecord;
+	// Execute fn (streamPath) as an async function for each item in the stream cache
+	async processStreamCache (fn) {
+		const files = await FsUtil.readDirectory (this.cacheDataPath);
+		const ids = files.filter ((file) => {
+			return (App.systemAgent.getUuidCommand (file) == SystemInterface.CommandId.StreamItem);
+		});
+		for (const id of ids) {
+			await fn (Path.join (this.cacheDataPath, id));
+		}
+	}
 
-			const ids = [ ];
-			streamrecord = null;
-			setTimeout (() => {
-				FsUtil.readDirectory (this.cacheDataPath, readDirectoryComplete);
-			}, 0);
+	// Read stream records from the cache, verify existence of stream files, and remove streams with invalid data
+	async readStreamCache () {
+		let streamcount;
 
-			const readDirectoryComplete = (err, files) => {
-				if (err != null) {
-					reject (err);
-					return;
+		streamcount = 0;
+		const removedirs = [ ];
+		const removefiles = [ ];
+		await this.processStreamCache (async (streamPath) => {
+			let refpath;
+
+			refpath = "";
+			try {
+				const data = await FsUtil.readFile (Path.join (streamPath, App.StreamRecordFilename));
+				const streamrecord = SystemInterface.parseCommand (data);
+				if (SystemInterface.isError (streamrecord) || (streamrecord.command != SystemInterface.CommandId.StreamItem))  {
+					throw Error ("Invalid stream record");
 				}
-
-				for (const file of files) {
-					if (App.systemAgent.getUuidCommand (file) == SystemInterface.CommandId.StreamItem) {
-						ids.push (file);
-					}
+				if ((typeof streamrecord.params.sourceId == "string") && (streamrecord.params.sourceId !== "")) {
+					refpath = Path.join (this.cacheDataPath, App.StreamReferencePath, streamrecord.params.sourceId);
 				}
-
-				idindex = -1;
-				readNextStream ();
-			};
-
-			const readNextStream = () => {
-				++idindex;
-				if (idindex >= ids.length) {
-					resolve ();
-					return;
-				}
-
-				streampath = Path.join (this.cacheDataPath, ids[idindex]);
-				Fs.readFile (Path.join (streampath, App.StreamRecordFilename), readRecordFileComplete);
-			};
-
-			const readRecordFileComplete = (err, data) => {
-				if (err != null) {
-					removeStreamDirectory ();
-					return;
-				}
-
-				streamrecord = SystemInterface.parseCommand (data.toString ());
-				if ((streamrecord == null) || (streamrecord.command != SystemInterface.CommandId.StreamItem))  {
-					removeStreamDirectory ();
-					return;
-				}
-
 				const filenames = [ ];
 				for (let i = 0; i < streamrecord.params.segmentCount; ++i) {
-					filenames.push (Path.join (streampath, App.StreamHlsPath, `${i}.ts`));
-					filenames.push (Path.join (streampath, App.StreamThumbnailPath, `${i}.jpg`));
+					filenames.push (Path.join (streamPath, App.StreamHlsPath, `${i}.ts`));
+					filenames.push (Path.join (streamPath, App.StreamThumbnailPath, `${i}.jpg`));
 				}
-				FsUtil.statFiles (filenames, (filename, stats) => {
+				await FsUtil.statFiles (filenames, (filename, stats) => {
 					return (stats.isFile () && (stats.size > 0));
-				}, statFilesComplete);
-			};
-
-			const statFilesComplete = (err) => {
-				if (err != null) {
-					removeStreamDirectory ();
-					return;
+				});
+				++streamcount;
+			}
+			catch (err) {
+				Log.warn (`${this.name} Invalid stream cache entry, deleted; path=${streamPath} err=${err}`);
+				removedirs.push (streamPath);
+				if (refpath !== "") {
+					removefiles.push (refpath);
 				}
-
-				this.streamMap[streamrecord.params.id] = streamrecord;
-				if (streamrecord.params.sourceId != "") {
-					this.streamSourceMap[streamrecord.params.sourceId] = streamrecord;
+			}
+		});
+		for (const path of removedirs) {
+			try {
+				await FsUtil.removeDirectory (path);
+			}
+			catch (err) {
+				Log.debug (`${this.name} failed to remove stream cache directory; path=${path} err=${err}`);
+			}
+		}
+		for (const path of removefiles) {
+			try {
+				if (await FsUtil.fileExists (path)) {
+					await FsUtil.removeFile (path);
 				}
-				readNextStream ();
-			};
+			}
+			catch (err) {
+				Log.debug (`${this.name} failed to remove stream cache file; path=${path} err=${err}`);
+			}
+		}
 
-			const removeStreamDirectory = () => {
-				Log.warn (`${this.toString ()} Invalid stream cache entry, deleted; path=${streampath}`);
-				FsUtil.removeDirectory (streampath, readNextStream);
-			};
-		}));
+		streamcount -= removedirs.length;
+		if (streamcount < 0) {
+			streamcount = 0;
+		}
+		this.streamCount = streamcount;
 	}
 
-	// Execute subclass-specific stop operations and invoke the provided callback when complete
-	doStop (stopCallback) {
+	// Execute subclass-specific stop operations
+	async doStop () {
 		this.getDiskSpaceTask.stop ();
 		this.getDisplayInfoTask.stop ();
 		this.screenshotTask.stop ();
-		this.clear (stopCallback);
+		await this.clear ();
 	}
 
 	// Return a command invocation containing the server's status
@@ -452,7 +392,8 @@ class MonitorServer extends ServerBase {
 		const params = {
 			freeStorage: this.freeStorage,
 			totalStorage: this.totalStorage,
-			streamCount: Object.keys (this.streamMap).length,
+			streamCount: this.streamCount,
+			cacheMtime: this.cacheMtime,
 			thumbnailPath: ThumbnailPath,
 			screenshotPath: (this.screenshotTime > 0) ? ScreenshotPath : "",
 			screenshotTime: this.screenshotTime,
@@ -494,7 +435,7 @@ class MonitorServer extends ServerBase {
 			}
 		}
 
-		return (this.createCommand ("MonitorServerStatus", SystemInterface.Constant.Monitor, params));
+		return (this.createCommand ("MonitorServerStatus", params));
 	}
 
 	// Return a boolean value indicating if the provided AgentStatus command contains subclass-specific fields indicating a server status change
@@ -519,33 +460,36 @@ class MonitorServer extends ServerBase {
 		return (result);
 	}
 
-	// Clear the display of all active processes
-	clearDisplay (cmdInv, request, response) {
+	// Execute a ClearDisplay command
+	async clearDisplay (cmdInv, request, response) {
 		App.systemAgent.removeIntentGroup (this.name);
-		this.clear (() => { });
-		App.systemAgent.writeCommandResponse (request, response, this.createCommand ("CommandResult", SystemInterface.Constant.Monitor, {
+		await this.clear ();
+		App.systemAgent.writeCommandResponse (request, response, this.createCommand ("CommandResult", {
 			success: true
 		}));
 	}
 
-	// Play a media item
-	playMedia (cmdInv, request, response) {
-		let item, playparams, playcmd, playid;
+	// Execute a PlayMedia command
+	async playMedia (cmdInv, request, response) {
+		let playid;
 
 		if (typeof cmdInv.params.streamId == "string") {
 			playid = "";
-			if (this.streamMap[cmdInv.params.streamId] != null) {
+
+			if (await FsUtil.fileExists (Path.join (this.cacheDataPath, cmdInv.params.streamId, App.StreamRecordFilename))) {
 				playid = cmdInv.params.streamId;
 			}
-			else {
-				item = this.streamSourceMap[cmdInv.params.streamId];
-				if (item != null) {
-					playid = item.params.id;
+			if (playid == "") {
+				const refpath = Path.join (this.cacheDataPath, App.StreamReferencePath, cmdInv.params.streamId);
+				if (await FsUtil.fileExists (refpath)) {
+					const cacheid = await FsUtil.readFile (refpath);
+					if (await FsUtil.fileExists (Path.join (this.cacheDataPath, cacheid, App.StreamRecordFilename))) {
+						playid = cacheid;
+					}
 				}
 			}
-
 			if (playid != "") {
-				playparams = {
+				const playparams = {
 					streamId: playid
 				};
 				if (typeof cmdInv.params.startPosition == "number") {
@@ -555,9 +499,9 @@ class MonitorServer extends ServerBase {
 					playparams.minStartPositionDelta = cmdInv.params.minStartPositionDelta;
 					playparams.maxStartPositionDelta = cmdInv.params.maxStartPositionDelta;
 				}
-				playcmd = this.createCommand ("PlayCacheStream", SystemInterface.Constant.Monitor, playparams);
+				const playcmd = this.createCommand ("PlayCacheStream", playparams);
 				if (playcmd != null) {
-					this.playCacheStream (playcmd, request, response);
+					await this.playCacheStream (playcmd, request, response);
 					return;
 				}
 			}
@@ -568,32 +512,28 @@ class MonitorServer extends ServerBase {
 		}
 
 		this.displayMode = SystemInterface.Constant.PlayMediaDisplayState;
-		this.clear (() => {
-			this.playMediaName = cmdInv.params.mediaName;
-			this.isPlaying = true;
-			this.activateDesktopBlank (activateDesktopBlankComplete);
-		});
-		const activateDesktopBlankComplete = () => {
-			this.runPlayerProcess (cmdInv.params.streamUrl);
-			if ((typeof cmdInv.params.thumbnailUrl == "string") && (cmdInv.params.thumbnailUrl != "")) {
-				App.systemAgent.fetchUrlFile (cmdInv.params.thumbnailUrl, App.DATA_DIRECTORY, ScreenshotFilename, fetchThumbnailComplete);
-			}
-		};
-		const fetchThumbnailComplete = (err, destFilename) => {
-			if (err != null) {
-				Log.debug (`${this.toString ()} failed to load stream thumbnail image; err=${err}`);
-				return;
-			}
-			this.screenshotTime = Date.now ();
-		};
-
-		App.systemAgent.writeCommandResponse (request, response, this.createCommand ("CommandResult", SystemInterface.Constant.Monitor, {
+		await this.clear ();
+		this.playMediaName = cmdInv.params.mediaName;
+		this.isPlaying = true;
+		await this.activateDesktopBlank ();
+		this.runPlayerProcess (cmdInv.params.streamUrl);
+		App.systemAgent.writeCommandResponse (request, response, this.createCommand ("CommandResult", {
 			success: true
 		}));
+
+		if ((typeof cmdInv.params.thumbnailUrl == "string") && (cmdInv.params.thumbnailUrl != "")) {
+			try {
+				await App.systemAgent.fetchUrlFile (cmdInv.params.thumbnailUrl, App.DATA_DIRECTORY, ScreenshotFilename);
+				this.screenshotTime = Date.now ();
+			}
+			catch (err) {
+				Log.debug (`${this.name} failed to load stream thumbnail image; err=${err}`);
+			}
+		}
 	}
 
-	// Pause or resume any running playback process
-	pauseMedia (cmdInv, request, response) {
+	// Execute a PauseMedia command
+	async pauseMedia (cmdInv, request, response) {
 		this.isPlayPaused = (! this.isPlayPaused);
 		if (this.playProcess != null) {
 			this.playProcess.write ("p");
@@ -608,36 +548,29 @@ class MonitorServer extends ServerBase {
 			}
 		}
 
-		App.systemAgent.writeCommandResponse (request, response, this.createCommand ("CommandResult", SystemInterface.Constant.Monitor, {
+		App.systemAgent.writeCommandResponse (request, response, this.createCommand ("CommandResult", {
 			success: true
 		}));
 	}
 
-	// Play a media item from the stream cache
-	playCacheStream (cmdInv, request, response) {
-		let indexpath, indexdata, firstsegment, pct, delta;
+	// Execute a PlayCacheStream command
+	async playCacheStream (cmdInv, request, response) {
+		let indexdata, firstsegment, pct, delta;
 
-		const item = this.streamMap[cmdInv.params.streamId];
-		if (item == null) {
-			App.systemAgent.writeCommandResponse (request, response, this.createCommand ("CommandResult", SystemInterface.Constant.Monitor, {
-				success: false,
-				error: "Stream not found"
-			}));
-			return;
+		const streampath = Path.join (this.cacheDataPath, cmdInv.params.streamId);
+		const data = await FsUtil.readFile (Path.join (streampath, App.StreamRecordFilename));
+		const streamrecord = SystemInterface.parseCommand (data);
+		if (SystemInterface.isError (streamrecord) || (streamrecord.command != SystemInterface.CommandId.StreamItem)) {
+			throw Error ("Invalid stream record");
 		}
 
-		if (App.systemAgent.memoryFilePath != "") {
-			indexpath = Path.join (App.systemAgent.memoryFilePath, App.StreamHlsIndexFilename);
-		}
-		else {
-			indexpath = Path.join (this.cacheDataPath, App.StreamHlsIndexFilename);
-		}
+		const indexpath = Path.join ((App.systemAgent.memoryFilePath != "") ? App.systemAgent.memoryFilePath : this.cacheDataPath, App.StreamHlsIndexFilename);
 		firstsegment = 0;
 		pct = 0;
 		delta = 0;
 		if ((typeof cmdInv.params.startPosition == "number") && (cmdInv.params.startPosition > 0)) {
-			for (let i = 0; i < item.params.segmentCount; ++i) {
-				if (item.params.segmentPositions[i] >= cmdInv.params.startPosition) {
+			for (let i = 0; i < streamrecord.params.segmentCount; ++i) {
+				if (streamrecord.params.segmentPositions[i] >= cmdInv.params.startPosition) {
 					firstsegment = i;
 					break;
 				}
@@ -653,166 +586,136 @@ class MonitorServer extends ServerBase {
 				if (pct > 99) {
 					pct = 99;
 				}
-				delta = Math.floor ((pct / 100) * (item.params.segmentCount - firstsegment + 1));
+				delta = Math.floor ((pct / 100) * (streamrecord.params.segmentCount - firstsegment + 1));
 				firstsegment += delta;
-				if (firstsegment >= (item.params.segmentCount - 2)) {
-					firstsegment = item.params.segmentCount - 2;
+				if (firstsegment >= (streamrecord.params.segmentCount - 2)) {
+					firstsegment = streamrecord.params.segmentCount - 2;
 				}
 			}
 		}
 
 		indexdata = "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-ALLOW-CACHE:NO\n";
-		if (item.params.hlsTargetDuration > 0) {
-			indexdata += `#EXT-X-TARGETDURATION:${item.params.hlsTargetDuration}\n`;
+		if (streamrecord.params.hlsTargetDuration > 0) {
+			indexdata += `#EXT-X-TARGETDURATION:${streamrecord.params.hlsTargetDuration}\n`;
 		}
 		else {
 			indexdata += "#EXT-X-TARGETDURATION:5\n";
 		}
-		for (let i = firstsegment; i < item.params.segmentCount; ++i) {
-			indexdata += `#EXTINF:${item.params.segmentLengths[i]},\n`;
-			indexdata += Path.join (this.cacheDataPath, item.params.id, App.StreamHlsPath, item.params.segmentFilenames[i]);
+		for (let i = firstsegment; i < streamrecord.params.segmentCount; ++i) {
+			indexdata += `#EXTINF:${streamrecord.params.segmentLengths[i]},\n`;
+			indexdata += Path.join (this.cacheDataPath, streamrecord.params.id, App.StreamHlsPath, streamrecord.params.segmentFilenames[i]);
 			indexdata += "\n";
 		}
 		indexdata += "#EXT-X-ENDLIST\n";
 
 		this.displayMode = SystemInterface.Constant.PlayMediaDisplayState;
-		Fs.writeFile (indexpath, indexdata, { }, (err) => {
-			if (err != null) {
-				Log.debug (`${this.toString ()} failed to play cache stream; err=${err}`);
-				return;
-			}
-
-			if (cmdInv.prefix[SystemInterface.Constant.AgentIdPrefixField] != App.systemAgent.agentId) {
-				App.systemAgent.removeIntentGroup (this.name);
-			}
-			this.clear (clearComplete);
-		});
-		const clearComplete = () => {
-			this.playMediaName = item.params.name;
-			this.isPlaying = true;
-			this.activateDesktopBlank (activateDesktopBlankComplete);
-		};
-		const activateDesktopBlankComplete = () => {
-			this.runPlayerProcess (indexpath);
-			Fs.copyFile (Path.join (this.cacheDataPath, cmdInv.params.streamId, App.StreamThumbnailPath, `${firstsegment}.jpg`), Path.join (App.DATA_DIRECTORY, ScreenshotFilename), copyThumbnailComplete);
-		};
-		const copyThumbnailComplete = (err) => {
-			if (err != null) {
-				Log.debug (`${this.toString ()} failed to copy stream thumbnail image; err=${err}`);
-				return;
-			}
-			this.screenshotTime = Date.now ();
-		};
-
-		App.systemAgent.writeCommandResponse (request, response, this.createCommand ("CommandResult", SystemInterface.Constant.Monitor, {
+		await FsUtil.writeFile (indexpath, indexdata, { });
+		if (cmdInv.prefix[SystemInterface.Constant.AgentIdPrefixField] != App.systemAgent.agentId) {
+			App.systemAgent.removeIntentGroup (this.name);
+		}
+		await this.clear ();
+		this.playMediaName = streamrecord.params.name;
+		this.isPlaying = true;
+		await this.activateDesktopBlank ();
+		this.runPlayerProcess (indexpath);
+		App.systemAgent.writeCommandResponse (request, response, this.createCommand ("CommandResult", {
 			success: true
 		}));
+
+		try {
+			await FsUtil.copyFile (Path.join (this.cacheDataPath, cmdInv.params.streamId, App.StreamThumbnailPath, `${firstsegment}.jpg`), Path.join (App.DATA_DIRECTORY, ScreenshotFilename));
+			this.screenshotTime = Date.now ();
+		}
+		catch (err) {
+			Log.debug (`${this.name} failed to copy stream thumbnail image; err=${err}`);
+		}
 	}
 
-	// Delete all stored cache items
-	clearCache (cmdInv, request, response) {
+	// Execute a ClearCache command
+	async clearCache (cmdInv, request, response) {
 		App.systemAgent.removeIntentGroup (this.name);
-		setTimeout (() => {
-			this.clear (clearComplete);
-		}, 0);
-		const clearComplete = () => {
-			this.streamMap = { };
-			this.streamSourceMap = { };
-			FsUtil.removeDirectory (this.cacheDataPath, removeDirectoryComplete);
-		};
-		const removeDirectoryComplete = (err) => {
-			if (err != null) {
-				Log.warn (`Failed to remove cache files; path=${this.cacheDataPath} err=${err}`);
-				return;
-			}
-
-			FsUtil.createDirectory (this.cacheDataPath, createDirectoryComplete);
-		};
-		const createDirectoryComplete = (err) => {
-			if (err != null) {
-				Log.warn (`Failed to create cache data directory; path=${this.cacheDataPath} err=${err}`);
-			}
+		await this.clear ();
+		try {
+			await FsUtil.removeDirectory (this.cacheDataPath);
+			await FsUtil.createDirectory (this.cacheDataPath);
+			this.streamCount = 0;
 			this.getDiskSpaceTask.setNextRepeat (0);
-		};
-
-		App.systemAgent.writeCommandResponse (request, response, this.createCommand ("CommandResult", SystemInterface.Constant.Monitor, {
+		}
+		catch (err) {
+			Log.warn (`Failed to clear cache data directory; path=${this.cacheDataPath} err=${err}`);
+		}
+		App.systemAgent.writeCommandResponse (request, response, this.createCommand ("CommandResult", {
 			success: true
 		}));
 	}
 
 	// Stop all running display processes
-	clear (clearCallback) {
-		this.emitter.once (ClearCompleteEvent, clearCallback);
-		if (this.isClearing) {
+	async clear () {
+		const shouldclear = await new Promise ((resolve, reject) => {
+			if (this.isClearing) {
+				this.emitter.once (ClearCompleteEvent, () => {
+					resolve (false);
+				});
+				return;
+			}
+			this.isClearing = true;
+			resolve (true);
+		});
+		if (! shouldclear) {
 			return;
 		}
 
-		this.isClearing = true;
 		this.runBrowserProcessTask.stop ();
 		this.findBrowserProcessTask.stop ();
-		this.stopPlayer (() => {
-			stopPlayerComplete ();
-		});
-		const stopPlayerComplete = () => {
-			this.stopBrowser (stopBrowserComplete);
-		};
-		const stopBrowserComplete = () => {
-			this.stopSurface (stopSurfaceComplete);
-		};
-		const stopSurfaceComplete = () => {
-			endClear ();
-		};
-		const endClear = () => {
-			this.isClearing = false;
-			this.isPlayPaused = false;
-			this.emitter.emit (ClearCompleteEvent);
-		};
+		await this.stopPlayer ();
+		await this.stopBrowser ();
+		await this.stopSurface ();
+		this.isPlayPaused = false;
+		this.isClearing = false;
+		this.emitter.emit (ClearCompleteEvent);
 	}
 
-	// Stop any active media player process and invoke the provided callback when complete
-	stopPlayer (callback) {
-		App.systemAgent.runProcess (KillallProcessName, [
-			"-q", "omxplayer.bin"
-		]).catch ((err) => {
-			Log.err (`${this.toString ()} error stopping player process; err=${err}`);
-		}).then (() => {
-			this.playProcess = null;
-			this.isPlaying = false;
-			callback ();
-		});
+	// Stop any active media player process
+	async stopPlayer () {
+		try {
+			await App.systemAgent.runProcess (KillallProcessName, [
+				"-q", "omxplayer.bin"
+			]);
+		}
+		catch (err) {
+			Log.err (`${this.name} error stopping player process; err=${err}`);
+		}
+		this.playProcess = null;
+		this.isPlaying = false;
 	}
 
-	// Stop any active browser process and invoke the provided callback when complete
-	stopBrowser (callback) {
+	// Stop any active browser process
+	async stopBrowser () {
 		if (! this.isShowingUrl) {
-			if (callback != null) {
-				process.nextTick (callback);
-			}
 			return;
 		}
-
-		App.systemAgent.runProcess (KillallProcessName, [
-			"-q", "chromium-browse", "chromium-browser-v7", "chromium-browser"
-		]).catch ((err) => {
-			Log.err (`${this.toString ()} error stopping browser process; err=${err}`);
-		}).then (() => {
-			callback ();
-		});
+		try {
+			await App.systemAgent.runProcess (KillallProcessName, [
+				"-q", "chromium-browse", "chromium-browser-v7", "chromium-browser"
+			]);
+		}
+		catch (err) {
+			Log.err (`${this.name} error stopping browser process; err=${err}`);
+		}
 	}
 
-	// Stop any active surface process and invoke the provided callback when complete
-	stopSurface (callback) {
+	// Stop any active surface process
+	async stopSurface () {
 		if (this.surfaceProcess != null) {
 			this.surfaceProcess.stop ();
 			this.surfaceProcess = null;
 		}
-		process.nextTick (callback);
 	}
 
-	// Launch a browser to show a web URL
-	showWebUrl (cmdInv, request, response) {
+	// Execute a ShowWebUrl command
+	async showWebUrl (cmdInv, request, response) {
 		if (! this.isShowUrlAvailable) {
-			App.systemAgent.writeCommandResponse (request, response, this.createCommand ("CommandResult", SystemInterface.Constant.Monitor, {
+			App.systemAgent.writeCommandResponse (request, response, this.createCommand ("CommandResult", {
 				success: false
 			}));
 			return;
@@ -821,140 +724,93 @@ class MonitorServer extends ServerBase {
 		if (cmdInv.prefix[SystemInterface.Constant.AgentIdPrefixField] != App.systemAgent.agentId) {
 			App.systemAgent.removeIntentGroup (this.name);
 		}
-
 		this.displayMode = SystemInterface.Constant.ShowUrlDisplayState;
-		this.clear (() => {
-			this.deactivateDesktopBlank (deactivateDesktopBlankComplete);
-		});
-		const deactivateDesktopBlankComplete = () => {
-			this.runBrowserProcessTask.setRepeating ((callback) => {
-				this.runBrowserProcess (cmdInv.params.url, callback);
-			}, RunBrowserProcessPeriod);
-		};
-
-		App.systemAgent.writeCommandResponse (request, response, this.createCommand ("CommandResult", SystemInterface.Constant.Monitor, {
+		await this.clear ();
+		await this.deactivateDesktopBlank ();
+		this.runBrowserProcessTask.setRepeating ((callback) => {
+			this.runBrowserProcess (cmdInv.params.url, callback);
+		}, RunBrowserProcessPeriod);
+		App.systemAgent.writeCommandResponse (request, response, this.createCommand ("CommandResult", {
 			success: true
 		}));
 	}
 
-	// Load and display a timelapse image from a camera agent
-	showCameraImage (cmdInv, request, response) {
-		let camerastatus;
-
-		this.clearImageCache ().then (() => {
-			return (App.systemAgent.agentControl.invokeHostCommand (cmdInv.params.host, SystemInterface.Constant.DefaultInvokePath, this.createCommand ("GetStatus"), SystemInterface.CommandId.AgentStatus));
-		}).then ((responseCommand) => {
-			if (responseCommand.params.cameraServerStatus == null) {
-				return (Promise.reject (Error ("Host provided no camera server status")));
-			}
-
-			camerastatus = responseCommand;
-			return (this.getImageCacheFilename ("jpg"));
-		}).then ((filename) => {
-			const cmd = this.createCommand ("GetCaptureImage", SystemInterface.Constant.Camera, {
-				imageTime: cmdInv.params.imageTime
-			});
-			if (cmd == null) {
-				return (Promise.reject (Error ("Failed to create GetCaptureImage command")));
-			}
-
-			return (App.systemAgent.fetchUrlFile (`http:${App.DoubleSlash}${StringUtil.parseAddressHostname (cmdInv.params.host.hostname)}:${camerastatus.params.tcpPort2}${camerastatus.params.cameraServerStatus.captureImagePath}?${SystemInterface.Constant.UrlQueryParameter}=${encodeURIComponent (JSON.stringify (cmd))}`, App.DATA_DIRECTORY, filename));
-		}).then ((urlFile) => {
-			Log.debug (`${this.toString ()} ShowCameraImage saved image data; path=${urlFile}`);
-			App.systemAgent.writeCommandResponse (request, response, this.createCommand ("CommandResult", SystemInterface.Constant.Monitor, {
-				success: true
-			}));
-
-			Fs.copyFile (urlFile, Path.join (App.DATA_DIRECTORY, ScreenshotFilename), (err) => {
-				if (err != null) {
-					Log.debug (`${this.toString ()} failed to copy camera thumbnail image; err=${err}`);
-					return;
-				}
-				this.screenshotTime = Date.now ();
-			});
-
-			if (cmdInv.prefix[SystemInterface.Constant.AgentIdPrefixField] != App.systemAgent.agentId) {
-				App.systemAgent.removeIntentGroup (this.name);
-			}
-			this.displayMode = SystemInterface.Constant.ShowImageDisplayState;
-			this.showImageName = cmdInv.params.host.hostname;
-			if (this.surfaceProcess != null) {
-				this.surfaceProcess.write (JSON.stringify (this.createCommand ("ShowFileImageBackground", SystemInterface.Constant.DefaultCommandType, {
-					imagePath: urlFile
-				})));
-				return;
-			}
-
-			this.clear (() => {
-				this.activateDesktopBlank (activateDesktopBlankComplete);
-			});
-			const activateDesktopBlankComplete = () => {
-				this.runSurfaceProcess ();
-				if (this.surfaceProcess != null) {
-					this.surfaceProcess.write (JSON.stringify (this.createCommand ("ShowFileImageBackground", SystemInterface.Constant.DefaultCommandType, {
-						imagePath: urlFile
-					})));
-				}
-			};
-		}).catch ((err) => {
-			Log.debug (`${this.toString ()} failed to execute ShowCameraImage command; err=${err}`);
-			App.systemAgent.writeCommandResponse (request, response, this.createCommand ("CommandResult", SystemInterface.Constant.Monitor, {
-				success: false
-			}));
+	// Execute a ShowCameraImage command
+	async showCameraImage (cmdInv, request, response) {
+		const cmd = this.createCommand ("GetCaptureImage", {
+			imageTime: cmdInv.params.imageTime
 		});
+		if (cmd == null) {
+			throw Error ("Failed to create GetCaptureImage command");
+		}
+
+		await this.clearImageCache ();
+		const camerastatus = await App.systemAgent.agentControl.invokeHostCommand (cmdInv.params.host, SystemInterface.Constant.DefaultInvokePath, this.createCommand ("GetStatus"), SystemInterface.CommandId.AgentStatus);
+		if (camerastatus.params.cameraServerStatus == null) {
+			throw Error ("Host provided no camera server status");
+		}
+		const filename = await this.getImageCacheFilename ("jpg");
+		const urlfile = await App.systemAgent.fetchUrlFile (`http:${App.DoubleSlash}${StringUtil.parseAddressHostname (cmdInv.params.host.hostname)}:${camerastatus.params.tcpPort2}${camerastatus.params.cameraServerStatus.captureImagePath}?${SystemInterface.Constant.UrlQueryParameter}=${encodeURIComponent (JSON.stringify (cmd))}`, App.DATA_DIRECTORY, filename);
+		Log.debug (`${this.name} ShowCameraImage saved image data; path=${urlfile}`);
+
+		if (cmdInv.prefix[SystemInterface.Constant.AgentIdPrefixField] != App.systemAgent.agentId) {
+			App.systemAgent.removeIntentGroup (this.name);
+		}
+
+		App.systemAgent.writeCommandResponse (request, response, this.createCommand ("CommandResult", {
+			success: true
+		}));
+		this.displayMode = SystemInterface.Constant.ShowImageDisplayState;
+		this.showImageName = cmdInv.params.host.hostname;
+
+		await this.commandSurfaceProcess (this.createCommand ("ShowFileImageBackground", {
+			imagePath: urlfile
+		}));
+
+		try {
+			FsUtil.copyFile (urlfile, Path.join (App.DATA_DIRECTORY, ScreenshotFilename));
+			this.screenshotTime = Date.now ();
+		}
+		catch (err) {
+			Log.debug (`${this.name} failed to copy camera thumbnail image; err=${err}`);
+		}
 	}
 
-	// Play a live stream from a camera agent
-	playCameraStream (cmdInv, request, response) {
-		let streamurl;
-
-		const cmd = this.createCommand ("GetCameraStream", SystemInterface.Constant.Camera, {
+	// Execute a PlayCameraStream command
+	async playCameraStream (cmdInv, request, response) {
+		const cmd = this.createCommand ("GetCameraStream", {
 			monitorName: App.systemAgent.displayName
 		});
 		if (cmd == null) {
-			App.systemAgent.writeCommandResponse (request, response, this.createCommand ("CommandResult", SystemInterface.Constant.Monitor, {
+			App.systemAgent.writeCommandResponse (request, response, this.createCommand ("CommandResult", {
 				success: false
 			}));
 			return;
 		}
 
-		streamurl = "";
-		App.systemAgent.agentControl.invokeHostCommand (cmdInv.params.host, SystemInterface.Constant.DefaultInvokePath, cmd, SystemInterface.CommandId.GetCameraStreamResult).then ((responseCommand) => {
-			streamurl = responseCommand.params.streamUrl;
-			doPlay ();
-			App.systemAgent.writeCommandResponse (request, response, this.createCommand ("CommandResult", SystemInterface.Constant.Monitor, {
-				success: true
-			}));
-		}).catch ((err) => {
-			Log.debug (`${this.toString ()} failed to execute PlayCameraStream command; err=${err}`);
-			App.systemAgent.writeCommandResponse (request, response, this.createCommand ("CommandResult", SystemInterface.Constant.Monitor, {
-				success: false
-			}));
-		});
+		const responsecmd = await App.systemAgent.agentControl.invokeHostCommand (cmdInv.params.host, SystemInterface.Constant.DefaultInvokePath, cmd, SystemInterface.CommandId.GetCameraStreamResult);
+		const streamurl = responsecmd.params.streamUrl;
 
-		const doPlay = () => {
-			if (cmdInv.prefix[SystemInterface.Constant.AgentIdPrefixField] != App.systemAgent.agentId) {
-				App.systemAgent.removeIntentGroup (this.name);
-			}
-			this.displayMode = SystemInterface.Constant.PlayCameraStreamDisplayState;
-			this.clear (clearComplete);
-		};
-		const clearComplete = () => {
-			this.playMediaName = cmdInv.params.host.hostname;
-			this.isPlaying = true;
-			this.activateDesktopBlank (activateDesktopBlankComplete);
-		};
-		const activateDesktopBlankComplete = () => {
-			Fs.copyFile (Path.join (App.BIN_DIRECTORY, CameraScreenshotFilename), Path.join (App.DATA_DIRECTORY, ScreenshotFilename), (err) => {
-				if (err != null) {
-					Log.debug (`${this.toString ()} failed to copy camera screenshot image; err=${err}`);
-					return;
-				}
-				this.screenshotTime = Date.now ();
-			});
+		if (cmdInv.prefix[SystemInterface.Constant.AgentIdPrefixField] != App.systemAgent.agentId) {
+			App.systemAgent.removeIntentGroup (this.name);
+		}
+		this.displayMode = SystemInterface.Constant.PlayCameraStreamDisplayState;
+		await this.clear ();
+		this.playMediaName = cmdInv.params.host.hostname;
+		this.isPlaying = true;
+		await this.activateDesktopBlank ();
+		this.runPlayerProcess (streamurl);
+		App.systemAgent.writeCommandResponse (request, response, this.createCommand ("CommandResult", {
+			success: true
+		}));
 
-			this.runPlayerProcess (streamurl);
-		};
+		try {
+			await FsUtil.copyFile (Path.join (App.BIN_DIRECTORY, CameraScreenshotFilename), Path.join (App.DATA_DIRECTORY, ScreenshotFilename));
+			this.screenshotTime = Date.now ();
+		}
+		catch (err) {
+			Log.debug (`${this.name} failed to copy camera screenshot image; err=${err}`);
+		}
 	}
 
 	// Run a browser process if one is not already running, and invoke the provided callback when complete
@@ -967,7 +823,7 @@ class MonitorServer extends ServerBase {
 			return;
 		}
 
-		Log.debug (`${this.toString ()} run browser; url=${url}`);
+		Log.debug (`${this.name} run browser; url=${url}`);
 		this.findBrowserProcess (() => {
 			if (this.isShowingUrl) {
 				callback ();
@@ -980,27 +836,28 @@ class MonitorServer extends ServerBase {
 				"--kiosk",
 				"--user-data-dir=/tmp",
 				url
-			], {
-				"DISPLAY": this.xDisplay
-			}, "", (lines, parseCallback) => {
+			], (lines, parseCallback) => {
 				for (const line of lines) {
-					Log.debug4 (`${this.toString ()} browser output: ${line}`);
+					Log.debug4 (`${this.name} browser output: ${line}`);
 				}
 				process.nextTick (parseCallback);
 			}, (err, isExitSuccess) => {
-				Log.debug3 (`${this.toString ()} browser end; err=${err} isExitSuccess=${isExitSuccess}`);
+				Log.debug3 (`${this.name} browser end; err=${err} isExitSuccess=${isExitSuccess}`);
 				if (proc == this.browserProcess) {
 					this.browserProcess = null;
 					this.isShowingUrl = false;
 				}
 				this.findBrowserProcessTask.setNextRepeat (0);
 			});
+			proc.env = {
+				"DISPLAY": this.xDisplay
+			};
 			this.browserProcess = proc;
 
 			if ((this.displayWidth > 0) && (this.displayHeight > 0)) {
 				App.systemAgent.runProcess (XdotoolProcessName, [ "mousemove", this.displayWidth, 0 ], { "DISPLAY": this.xDisplay }).then ((isExitSuccess) => {
 				}).catch ((err) => {
-					Log.err (`${this.toString ()} failed to run xdotool; err=${err}`);
+					Log.err (`${this.name} failed to run xdotool; err=${err}`);
 				});
 			}
 
@@ -1039,7 +896,7 @@ class MonitorServer extends ServerBase {
 				this.findBrowserProcessTask.stop ();
 			}
 		}).catch ((err) => {
-			Log.err (`${this.toString ()} error finding browser process; err=${err}`);
+			Log.err (`${this.name} error finding browser process; err=${err}`);
 		}).then (() => {
 			callback ();
 		});
@@ -1050,14 +907,14 @@ class MonitorServer extends ServerBase {
 		const args = Array.isArray (playerArgs) ? playerArgs : [ ];
 		args.push ("--no-osd");
 		args.push (targetMedia);
-		Log.debug (`${this.toString ()} run media player; args=${JSON.stringify (args)}`);
-		const proc = new ExecProcess (OmxplayerProcessName, args, { }, "", (lines, parseCallback) => {
+		Log.debug (`${this.name} run media player; args=${JSON.stringify (args)}`);
+		const proc = new ExecProcess (OmxplayerProcessName, args, (lines, parseCallback) => {
 			for (const line of lines) {
-				Log.debug4 (`${this.toString ()} player output: ${line}`);
+				Log.debug4 (`${this.name} player output: ${line}`);
 			}
 			process.nextTick (parseCallback);
 		}, (err, isExitSuccess) => {
-			Log.debug3 (`${this.toString ()} player end; err=${err} isExitSuccess=${isExitSuccess}`);
+			Log.debug3 (`${this.name} player end; err=${err} isExitSuccess=${isExitSuccess}`);
 			if (proc == this.playProcess) {
 				this.playProcess = null;
 				this.isPlaying = false;
@@ -1073,142 +930,128 @@ class MonitorServer extends ServerBase {
 		}
 	}
 
-	// Run a display surface process
-	runSurfaceProcess () {
-		Log.debug (`${this.toString ()} run surface`);
-		const proc = new ExecProcess (Path.join (App.BIN_DIRECTORY, "membrane-surface", "membrane-surface"), [ ], {
-			"RESOURCE_PATH": Path.join (App.BIN_DIRECTORY, "membrane-surface", "membrane-surface.dat"),
-			"LD_LIBRARY_PATH": Path.join (App.BIN_DIRECTORY, "membrane-surface")
-		}, "", (lines, parseCallback) => {
+	// Run a display surface process. If envValues is provided, add its attributes to the process environment.
+	runSurfaceProcess (envValues) {
+		Log.debug (`${this.name} run surface`);
+		const proc = new ExecProcess (Path.join (App.BIN_DIRECTORY, "membrane-surface", "membrane-surface"), [ ], (lines, parseCallback) => {
 			for (const line of lines) {
-				Log.debug4 (`${this.toString ()} surface output: ${line}`);
+				Log.debug4 (`${this.name} surface output: ${line}`);
 			}
 			process.nextTick (parseCallback);
 		}, (err, isExitSuccess) => {
-			Log.debug3 (`${this.toString ()} surface end; err=${err} isExitSuccess=${isExitSuccess}`);
+			Log.debug3 (`${this.name} surface end; err=${err} isExitSuccess=${isExitSuccess}`);
 			if (proc == this.surfaceProcess) {
 				this.surfaceProcess = null;
 			}
+			this.emitter.emit (SurfaceEndEvent);
 		});
+
+		proc.env = {
+			"RESOURCE_PATH": Path.join (App.BIN_DIRECTORY, "membrane-surface", "membrane-surface.dat"),
+			"LD_LIBRARY_PATH": Path.join (App.BIN_DIRECTORY, "membrane-surface")
+		};
+		if (envValues !== undefined) {
+			for (const key in envValues) {
+				proc.env[key] = envValues[key];
+			}
+		}
+
 		this.surfaceProcess = proc;
 		this.isPlayPaused = false;
 	}
 
-	// Deactivate and disable desktop screen blank functionality and invoke the provided callback when complete
-	deactivateDesktopBlank (endCallback) {
-		if (this.xDisplay == "") {
-			process.nextTick (endCallback);
+	// Write cmdInv to the surface process. If the surface process is not running, clear the display and launch the surface process before writing the command.
+	async commandSurfaceProcess (cmdInv) {
+		if (cmdInv == null) {
 			return;
 		}
-
-		App.systemAgent.runProcess (XsetProcessName, [ "s", "off" ], { "DISPLAY": this.xDisplay }).then ((isExitSuccess) => {
-			return (App.systemAgent.runProcess (XsetProcessName, [ "-dpms" ], { "DISPLAY": this.xDisplay }));
-		}).then ((isExitSuccess) => {
-			return (App.systemAgent.runProcess (XsetProcessName, [ "s", "noblank" ], { "DISPLAY": this.xDisplay }));
-		}).catch ((err) => {
-			Log.err (`${this.toString ()} error deactivating desktop blank; err=${err}`);
-		}).then (() => {
-			endCallback ();
+		if (this.surfaceProcess == null) {
+			await this.clear ();
+			this.runSurfaceProcess ();
+		}
+		if (this.surfaceProcess == null) {
+			Log.debug (`${this.name} discard surface command (failed to launch surface process)`);
+			return;
+		}
+		setImmediate (() => {
+			this.surfaceProcess.write (JSON.stringify (cmdInv));
 		});
 	}
 
-	// Activate the desktop screen blank and invoke the provided callback when complete
-	activateDesktopBlank (endCallback) {
+	// Deactivate and disable desktop screen blank functionality
+	async deactivateDesktopBlank () {
 		if (this.xDisplay == "") {
-			process.nextTick (endCallback);
 			return;
 		}
-
-		App.systemAgent.runProcess (XsetProcessName, [ "s", "activate" ], { "DISPLAY": this.xDisplay }).catch ((err) => {
-			Log.err (`${this.toString ()} error activating desktop blank; err=${err}`);
-		}).then (() => {
-			endCallback ();
-		});
+		try {
+			await App.systemAgent.runProcess (XsetProcessName, [ "s", "off" ], { "DISPLAY": this.xDisplay });
+			await App.systemAgent.runProcess (XsetProcessName, [ "-dpms" ], { "DISPLAY": this.xDisplay });
+			await App.systemAgent.runProcess (XsetProcessName, [ "s", "noblank" ], { "DISPLAY": this.xDisplay });
+		}
+		catch (err) {
+			Log.err (`${this.name} error deactivating desktop blank; err=${err}`);
+		}
 	}
 
-	// Start an intent to show a web content playlist
-	createWebDisplayIntent (cmdInv, request, response) {
-		const params = {
-			success: false,
-			error: ""
-		};
+	// Activate the desktop screen blank
+	async activateDesktopBlank (endCallback) {
+		if (this.xDisplay == "") {
+			return;
+		}
+		try {
+			await App.systemAgent.runProcess (XsetProcessName, [ "s", "activate" ], { "DISPLAY": this.xDisplay });
+		}
+		catch (err) {
+			Log.err (`${this.name} error activating desktop blank; err=${err}`);
+		}
+	}
+
+	// Execute a CreateWebDisplayIntent command
+	async createWebDisplayIntent (cmdInv, request, response) {
 		const intent = Intent.createIntent ("WebDisplayIntent", cmdInv.params);
-		if (intent == null) {
-			params.error = "Internal server error";
-		}
-		else {
-			App.systemAgent.removeIntentGroup (this.name);
-			params.success = true;
-			this.clear (() => {
-				App.systemAgent.runIntent (intent, this.name);
-			});
-		}
-
-		App.systemAgent.writeCommandResponse (request, response, this.createCommand ("CommandResult", SystemInterface.Constant.Monitor, params));
+		App.systemAgent.removeIntentGroup (this.name);
+		await this.clear ();
+		App.systemAgent.runIntent (intent, this.name);
+		App.systemAgent.writeCommandResponse (request, response, this.createCommand ("CommandResult", {
+			success: true
+		}));
 	}
 
-	// Start an intent to show a media content playlist
-	createMediaDisplayIntent (cmdInv, request, response) {
-		const params = {
-			success: false,
-			error: ""
-		};
+	// Execute a CreateMediaDisplayIntent command
+	async createMediaDisplayIntent (cmdInv, request, response) {
 		const intent = Intent.createIntent ("MediaDisplayIntent", cmdInv.params);
-		if (intent == null) {
-			params.error = "Internal server error";
-		}
-		else {
-			App.systemAgent.removeIntentGroup (this.name);
-			params.success = true;
-			this.clear (() => {
-				App.systemAgent.runIntent (intent, this.name);
-			});
-		}
-		App.systemAgent.writeCommandResponse (request, response, this.createCommand ("CommandResult", SystemInterface.Constant.Monitor, params));
+		App.systemAgent.removeIntentGroup (this.name);
+		await this.clear ();
+		App.systemAgent.runIntent (intent, this.name);
+		App.systemAgent.writeCommandResponse (request, response, this.createCommand ("CommandResult", {
+			success: true
+		}));
 	}
 
-	// Start an intent to show cached streams
-	createStreamCacheDisplayIntent (cmdInv, request, response) {
-		const params = {
-			success: false,
-			error: ""
-		};
+	// Execute a CreateStreamCacheDisplayIntent command
+	async createStreamCacheDisplayIntent (cmdInv, request, response) {
 		const intent = Intent.createIntent ("StreamCacheDisplayIntent", cmdInv.params);
-		if (intent == null) {
-			params.error = "Internal server error";
-		}
-		else {
-			App.systemAgent.removeIntentGroup (this.name);
-			params.success = true;
-			this.clear (() => {
-				App.systemAgent.runIntent (intent, this.name);
-			});
-		}
-		App.systemAgent.writeCommandResponse (request, response, this.createCommand ("CommandResult", SystemInterface.Constant.Monitor, params));
+		App.systemAgent.removeIntentGroup (this.name);
+		await this.clear ();
+		App.systemAgent.runIntent (intent, this.name);
+		App.systemAgent.writeCommandResponse (request, response, this.createCommand ("CommandResult", {
+			success: true
+		}));
 	}
 
-	// Start an intent to show images from camera agents
-	createCameraDisplayIntent (cmdInv, request, response) {
-		const params = {
-			success: false,
-			error: ""
-		};
+	// Execute a CreateCameraDisplayIntent command
+	async createCameraDisplayIntent (cmdInv, request, response) {
 		const intent = Intent.createIntent ("CameraDisplayIntent", cmdInv.params);
-		if (intent == null) {
-			params.error = "Internal server error";
-		}
-		else {
-			App.systemAgent.removeIntentGroup (this.name);
-			params.success = true;
-			this.clear (() => {
-				App.systemAgent.runIntent (intent, this.name);
-			});
-		}
-		App.systemAgent.writeCommandResponse (request, response, this.createCommand ("CommandResult", SystemInterface.Constant.Monitor, params));
+		App.systemAgent.removeIntentGroup (this.name);
+		await this.clear ();
+		App.systemAgent.runIntent (intent, this.name);
+		App.systemAgent.writeCommandResponse (request, response, this.createCommand ("CommandResult", {
+			success: true
+		}));
 	}
 
-	// Start a program to show monitor content chosen from among multiple sources
-	createMonitorProgram (cmdInv, request, response) {
+	// Execute a CreateMonitorProgram command
+	async createMonitorProgram (cmdInv, request, response) {
 		let item;
 
 		const params = {
@@ -1218,14 +1061,19 @@ class MonitorServer extends ServerBase {
 		const intents = [ ];
 		for (const directive of cmdInv.params.directives) {
 			item = null;
-			if (directive.webDisplayIntent !== undefined) {
-				item = Intent.createIntent ("WebDisplayIntent", directive.webDisplayIntent);
+			try {
+				if (directive.webDisplayIntent !== undefined) {
+					item = Intent.createIntent ("WebDisplayIntent", directive.webDisplayIntent);
+				}
+				else if (directive.mediaDisplayIntent !== undefined) {
+					item = Intent.createIntent ("MediaDisplayIntent", directive.mediaDisplayIntent);
+				}
+				else if (directive.streamCacheDisplayIntent !== undefined) {
+					item = Intent.createIntent ("StreamCacheDisplayIntent", directive.streamCacheDisplayIntent);
+				}
 			}
-			else if (directive.mediaDisplayIntent !== undefined) {
-				item = Intent.createIntent ("MediaDisplayIntent", directive.mediaDisplayIntent);
-			}
-			else if (directive.streamCacheDisplayIntent !== undefined) {
-				item = Intent.createIntent ("StreamCacheDisplayIntent", directive.streamCacheDisplayIntent);
+			catch (err) {
+				item = null;
 			}
 
 			if (item == null) {
@@ -1240,149 +1088,136 @@ class MonitorServer extends ServerBase {
 
 		if (params.success) {
 			App.systemAgent.removeIntentGroup (this.name);
-			this.clear (() => {
-				for (const intent of intents) {
-					App.systemAgent.runIntent (intent, this.name);
-				}
+			await this.clear ();
+			for (const intent of intents) {
+				App.systemAgent.runIntent (intent, this.name);
+			}
+		}
+		App.systemAgent.writeCommandResponse (request, response, this.createCommand ("CommandResult", params));
+	}
+
+	// Execute a CreateCacheStream command
+	async createCacheStream (cmdInv, request, response) {
+		const refpath = Path.join (this.cacheDataPath, App.StreamReferencePath, cmdInv.params.streamId);
+		if (await FsUtil.fileExists (refpath)) {
+			const cacheid = await FsUtil.readFile (refpath);
+			if (await FsUtil.fileExists (Path.join (this.cacheDataPath, cacheid, App.StreamRecordFilename))) {
+				App.systemAgent.writeCommandResponse (request, response, this.createCommand ("CommandResult", {
+					success: true
+				}));
+				return;
+			}
+		}
+
+		App.systemAgent.writeCommandResponse (request, response, this.createCommand ("CommandResult", {
+			success: true
+		}));
+		try {
+			const id = App.systemAgent.getUuid (SystemInterface.CommandId.StreamItem);
+			await App.systemAgent.runTask ("CacheMediaStream", {
+				cacheStreamId: id,
+				streamId: cmdInv.params.streamId,
+				streamUrl: cmdInv.params.streamUrl,
+				thumbnailUrl: cmdInv.params.thumbnailUrl,
+				dataPath: this.cacheDataPath,
+				streamName: cmdInv.params.streamName,
+				duration: cmdInv.params.duration,
+				width: cmdInv.params.width,
+				height: cmdInv.params.height,
+				bitrate: cmdInv.params.bitrate,
+				frameRate: cmdInv.params.frameRate
 			});
+			await FsUtil.writeFile (refpath, id, { });
+			this.getDiskSpaceTask.setNextRepeat (0);
+			++(this.streamCount);
+			this.cacheMtime = Date.now ();
 		}
-		App.systemAgent.writeCommandResponse (request, response, this.createCommand ("CommandResult", SystemInterface.Constant.Monitor, params));
+		catch (err) {
+			Log.err (`Failed to cache stream; err=${err}`);
+		}
 	}
 
-	// Copy data from a media server stream and store it locally
-	createCacheStream (cmdInv, request, response) {
-		const item = this.streamSourceMap[cmdInv.params.streamId];
-		if (item != null) {
-			App.systemAgent.writeCommandResponse (request, response, this.createCommand ("CommandResult", SystemInterface.Constant.Monitor, {
-				success: true
-			}));
-			return;
-		}
+	// Execute a RemoveStream command
+	async removeStream (cmdInv, request, response) {
+		App.systemAgent.writeCommandResponse (request, response, this.createCommand ("CommandResult", {
+			success: true
+		}));
 
-		const task = Task.createTask ("CacheMediaStream", {
-			streamId: cmdInv.params.streamId,
-			streamUrl: cmdInv.params.streamUrl,
-			thumbnailUrl: cmdInv.params.thumbnailUrl,
-			dataPath: this.cacheDataPath,
-			streamName: cmdInv.params.streamName,
-			duration: cmdInv.params.duration,
-			width: cmdInv.params.width,
-			height: cmdInv.params.height,
-			bitrate: cmdInv.params.bitrate,
-			frameRate: cmdInv.params.frameRate
-		});
-		if (task == null) {
-			App.systemAgent.writeCommandResponse (request, response, this.createCommand ("CommandResult", SystemInterface.Constant.Monitor, {
-				success: false,
-				error: "Internal server error"
-			}));
-			return;
-		}
+		const streampath = Path.join (this.cacheDataPath, cmdInv.params.id);
+		try {
+			const recordpath = Path.join (streampath, App.StreamRecordFilename);
+			if (! await FsUtil.fileExists (recordpath)) {
+				return;
+			}
+			const data = await FsUtil.readFile (recordpath);
+			const streamrecord = SystemInterface.parseCommand (data);
+			if (SystemInterface.isError (streamrecord) || (streamrecord.command != SystemInterface.CommandId.StreamItem))  {
+				return;
+			}
 
-		App.systemAgent.runTask (task, (task) => {
-			let record;
-
-			if (task.isSuccess) {
-				record = App.systemAgent.createCommand ("StreamItem", SystemInterface.Constant.Stream, task.resultObject);
-				if (record == null) {
-					Log.debug (`${this.toString ()} failed to create stream cache entry; err=Invalid StreamItem record`);
-				}
-				else {
-					this.streamMap[task.resultObject.id] = record;
-					if (task.resultObject.sourceId != "") {
-						this.streamSourceMap[task.resultObject.sourceId] = record;
-					}
+			Log.debug (`${this.name} remove cache stream for received RemoveStream command; path=${streampath}`);
+			await FsUtil.removeDirectory (streampath);
+			--(this.streamCount);
+			this.cacheMtime = Date.now ();
+			if ((typeof streamrecord.params.sourceId == "string") && (streamrecord.params.sourceId !== "")) {
+				const refpath = Path.join (this.cacheDataPath, App.StreamReferencePath, streamrecord.params.sourceId);
+				if (await FsUtil.fileExists (refpath)) {
+					await FsUtil.removeFile (refpath);
 				}
 			}
 			this.getDiskSpaceTask.setNextRepeat (0);
-		});
-
-		App.systemAgent.writeCommandResponse (request, response, this.createCommand ("CommandResult", SystemInterface.Constant.Monitor, {
-			success: true
-		}));
-	}
-
-	// Delete a previously created stream cache item
-	removeStream (cmdInv, request, response) {
-		const item = this.streamMap[cmdInv.params.id];
-		if (item == null) {
-			App.systemAgent.writeCommandResponse (request, response, this.createCommand ("CommandResult", SystemInterface.Constant.Monitor, {
-				success: false
-			}));
-			return;
 		}
-
-		const removepath = Path.join (this.cacheDataPath, cmdInv.params.id);
-		delete (this.streamMap[cmdInv.params.id]);
-		delete (this.streamSourceMap[item.params.sourceId]);
-
-		FsUtil.removeDirectory (removepath, (err) => {
-			if (err != null) {
-				Log.warn (`Failed to remove cache stream directory; path=${removepath} err=${err}`);
-			}
-			this.getDiskSpaceTask.setNextRepeat (0);
-		});
-
-		App.systemAgent.writeCommandResponse (request, response, this.createCommand ("CommandResult", SystemInterface.Constant.Monitor, {
-			success: true
-		}));
+		catch (err) {
+			Log.warn (`Failed to remove cache stream directory; path=${streampath} err=${err}`);
+		}
 	}
 
-	// Find stream cache items and write result commands to the provided client
-	findItems (cmdInv, client) {
-		// This FindItems handler does not implement search key filters or result offsets
-		const cmd = this.createCommand ("FindStreamsResult", SystemInterface.Constant.Monitor, {
+	// Execute a FindStreamItems command
+	async findStreamItems (cmdInv, client) {
+		// Search key filters and result offsets are not implemented
+		const cmd = this.createCommand ("FindStreamItemsResult", {
 			searchKey: "",
-			setSize: Object.keys (this.streamMap).length,
+			setSize: this.streamCount,
 			resultOffset: 0
 		});
-		if (cmd != null) {
-			client.emit (SystemInterface.Constant.WebSocketEvent, cmd);
+		if (cmd == null) {
+			return;
 		}
-		for (const record of Object.values (this.streamMap)) {
-			client.emit (SystemInterface.Constant.WebSocketEvent, record);
-		}
+		client.emit (SystemInterface.Constant.WebSocketEvent, cmd);
+		await this.processStreamCache (async (streamPath) => {
+			const data = await FsUtil.readFile (Path.join (streamPath, App.StreamRecordFilename));
+			const streamrecord = SystemInterface.parseCommand (data);
+			if ((! SystemInterface.isError (streamrecord)) && (streamrecord.command == SystemInterface.CommandId.StreamItem))  {
+				client.emit (SystemInterface.Constant.WebSocketEvent, streamrecord);
+			}
+		});
 	}
 
-	// Write a file response with the specified stream cache thumbnail image
-	getThumbnailImage (cmdInv, request, response) {
-		const item = this.streamMap[cmdInv.params.id];
-		if (item == null) {
-			App.systemAgent.writeResponse (request, response, 404);
-			return;
-		}
-
-		if (cmdInv.params.thumbnailIndex >= item.params.segmentCount) {
-			App.systemAgent.writeResponse (request, response, 404);
-			return;
-		}
-
+	// Execute a GetThumbnailImage command
+	async getThumbnailImage (cmdInv, request, response) {
 		const path = Path.join (this.cacheDataPath, cmdInv.params.id, App.StreamThumbnailPath, `${cmdInv.params.thumbnailIndex}.jpg`);
 		App.systemAgent.writeFileResponse (request, response, path, "image/jpeg");
 	}
 
-	// Update the monitor's screenshot image to reflect display state and invoke the provided callback when complete
-	captureScreenshot (endCallback) {
+	// Update the monitor's screenshot image to reflect display state
+	async captureScreenshot () {
 		if ((this.xDisplay == "") || this.isPlaying || (this.surfaceProcess != null)) {
-			process.nextTick (endCallback);
 			return;
 		}
-
 		const now = Date.now ();
 		const targetpath = Path.join (App.DATA_DIRECTORY, `screenshot_${now}.jpg`);
-		App.systemAgent.runProcess (ScrotProcessName,
-			[ targetpath, "-z", "-q", "90" ],
-			{ "DISPLAY": this.xDisplay }
-		).then (() => {
-			return (FsUtil.renameFile (targetpath, Path.join (App.DATA_DIRECTORY, ScreenshotFilename)));
-		}).then (() => {
+		try {
+			await App.systemAgent.runProcess (ScrotProcessName,
+				[ targetpath, "-z", "-q", "90" ],
+				{ "DISPLAY": this.xDisplay }
+			);
+			await FsUtil.renameFile (targetpath, Path.join (App.DATA_DIRECTORY, ScreenshotFilename));
 			this.screenshotTime = now;
-		}).catch ((err) => {
-			Log.err (`Failed to capture display screenshot; err=${err}`);
+		}
+		catch (err) {
+			Log.debug (`Failed to capture display screenshot; err=${err}`);
 			Fs.unlink (targetpath, () => { });
-		}).then (() => {
-			endCallback ();
-		});
+		}
 	}
 
 	// Return a promise that resolves with the name of a nonexistent file in the image cache
@@ -1395,12 +1230,10 @@ class MonitorServer extends ServerBase {
 						reject (Error (err));
 						return;
 					}
-
 					if (stats != null) {
 						assignFilename ();
 						return;
 					}
-
 					resolve (filename);
 				});
 			};
@@ -1432,13 +1265,81 @@ class MonitorServer extends ServerBase {
 
 					Fs.unlink (unlinkfiles.shift (), (err) => {
 						if (err != null) {
-							Log.warn (`${this.toString ()} Failed to delete image cache file, ${err}`);
+							Log.warn (`${this.name} Failed to delete image cache file, ${err}`);
 						}
 						unlinkNextFile ();
 					});
 				};
 				unlinkNextFile ();
 			});
+		}));
+	}
+
+	// Execute a ShowDesktopCountdown command
+	async showDesktopCountdown (cmdInv, request, response) {
+		let bgpath;
+
+		const commands = [ ];
+		bgpath = "";
+		if (this.xDisplay != "") {
+			try {
+				bgpath = Path.join (App.DATA_DIRECTORY, `showDesktopCountdown_${Date.now ()}.jpg`);
+				await App.systemAgent.runProcess (ScrotProcessName,
+					[ bgpath, "-z", "-q", "90" ],
+					{ "DISPLAY": this.xDisplay }
+				);
+				if (this.surfaceProcess != null) {
+					commands.push ({
+						executeTime: 0,
+						command: this.createCommand ("ShowFileImageBackground", {
+							imagePath: bgpath,
+							background: SystemInterface.Constant.CenterBackground
+						})
+					});
+				}
+			}
+			catch (err) {
+				Log.debug (`${this.name} showDesktopCountdown failed to capture screenshot image; err=${err}`);
+				bgpath = "";
+			}
+		}
+		const cmd = this.createCommand ("ShowCountdownWindow", {
+			windowId: "ShowCountdownWindow",
+			icon: SystemInterface.Constant.CountdownIcon,
+			positionX: -80,
+			positionY: -80,
+			labelText: App.uiText.getText ("WebCountdownWindowText"),
+			countdownTime: cmdInv.params.countdownTime
+		});
+		if (cmd == null) {
+			App.systemAgent.writeCommandResponse (request, response, this.createCommand ("CommandResult", {
+				success: false
+			}));
+			return;
+		}
+
+		if (this.surfaceProcess == null) {
+			const env = { };
+			if (bgpath != "") {
+				env["BACKGROUND_IMAGE_PATH"] = bgpath;
+				env["BACKGROUND_IMAGE_TYPE"] = SystemInterface.Constant.CenterBackground;
+			}
+			this.runSurfaceProcess (env);
+		}
+		if (this.surfaceProcess == null) {
+			Log.debug (`${this.name} discard ShowDesktopCountdown command (failed to launch surface process)`);
+			Fs.unlink (bgpath, () => { });
+			return;
+		}
+		setImmediate (() => {
+			this.surfaceProcess.write (JSON.stringify (cmd));
+		});
+
+		this.emitter.once (SurfaceEndEvent, () => {
+			Fs.unlink (bgpath, () => { });
+		});
+		App.systemAgent.writeCommandResponse (request, response, this.createCommand ("CommandResult", {
+			success: true
 		}));
 	}
 }

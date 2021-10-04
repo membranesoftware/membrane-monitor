@@ -1,5 +1,5 @@
 /*
-* Copyright 2018-2020 Membrane Software <author@membranesoftware.com> https://membranesoftware.com
+* Copyright 2018-2021 Membrane Software <author@membranesoftware.com> https://membranesoftware.com
 *
 * Redistribution and use in source and binary forms, with or without
 * modification, are permitted provided that the following conditions are met:
@@ -31,7 +31,6 @@
 
 const App = global.App || { };
 const Path = require ("path");
-const Result = require (Path.join (App.SOURCE_DIRECTORY, "Result"));
 const Log = require (Path.join (App.SOURCE_DIRECTORY, "Log"));
 const SystemInterface = require (Path.join (App.SOURCE_DIRECTORY, "SystemInterface"));
 const IntentBase = require (Path.join (App.SOURCE_DIRECTORY, "Intent", "IntentBase"));
@@ -42,13 +41,12 @@ const AgentStatusWaitPeriod = 30000; // milliseconds
 class CameraDisplayIntent extends IntentBase {
 	constructor () {
 		super ();
-		this.name = "CameraDisplayIntent";
 		this.displayName = "Show images from cameras";
 		this.stateType = "CameraDisplayIntentState";
 		this.isDisplayIntent = true;
 	}
 
-	// Configure the intent's state using values in the provided params object and return a Result value
+	// Configure the intent's state using values in the provided params object
 	doConfigure (configParams) {
 		if (Array.isArray (configParams.cameras)) {
 			this.state.cameras = configParams.cameras;
@@ -66,8 +64,6 @@ class CameraDisplayIntent extends IntentBase {
 				this.state.maxItemDisplayDuration = configParams.maxItemDisplayDuration;
 			}
 		}
-
-		return (Result.Success);
 	}
 
 	// Perform actions appropriate when the intent becomes active
@@ -143,7 +139,7 @@ class CameraDisplayIntent extends IntentBase {
 			return;
 		}
 
-		const cmd = App.systemAgent.createCommand ("ShowCameraImage", SystemInterface.Constant.Monitor, { host: this.currentCamera });
+		const cmd = App.systemAgent.createCommand ("ShowCameraImage", { host: this.currentCamera });
 		if (cmd == null) {
 			return;
 		}
@@ -178,7 +174,7 @@ class CameraDisplayIntent extends IntentBase {
 				this.nextCameraChangeTime = -1;
 			}
 			else {
-				this.nextCameraChangeTime = this.updateTime + this.prng.getRandomInteger (this.state.minItemDisplayDuration * 1000, this.state.maxItemDisplayDuration * 1000);
+				this.nextCameraChangeTime = this.updateTime + App.systemAgent.getRandomInteger (this.state.minItemDisplayDuration * 1000, this.state.maxItemDisplayDuration * 1000);
 			}
 		}
 		if (this.currentCamera == null) {
@@ -189,7 +185,7 @@ class CameraDisplayIntent extends IntentBase {
 			if ((this.nextStatusTime >= 0) && (this.updateTime >= this.nextStatusTime)) {
 				this.isRequestingStatus = true;
 				const host = this.currentCamera;
-				App.systemAgent.agentControl.invokeHostCommand (host, SystemInterface.Constant.DefaultInvokePath, App.systemAgent.createCommand ("GetStatus", SystemInterface.Constant.DefaultCommandType), SystemInterface.CommandId.AgentStatus).then ((responseCommand) => {
+				App.systemAgent.agentControl.invokeHostCommand (host, SystemInterface.Constant.DefaultInvokePath, App.systemAgent.createCommand ("GetStatus"), SystemInterface.CommandId.AgentStatus).then ((responseCommand) => {
 					if ((this.currentCamera == host) && (responseCommand.params.cameraServerStatus != null)) {
 						this.currentCameraStatus = responseCommand.params.cameraServerStatus;
 

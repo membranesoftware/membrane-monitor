@@ -1,5 +1,5 @@
 /*
-* Copyright 2018-2020 Membrane Software <author@membranesoftware.com> https://membranesoftware.com
+* Copyright 2018-2021 Membrane Software <author@membranesoftware.com> https://membranesoftware.com
 *
 * Redistribution and use in source and binary forms, with or without
 * modification, are permitted provided that the following conditions are met:
@@ -40,6 +40,7 @@ class RepeatTask {
 		this.executeTimeout = null;
 		this.isRepeating = false;
 		this.isSuspended = false;
+		this.nextExecuteTime = 0;
 		this.nextRepeatPeriod = 0;
 		this.minIntervalPeriod = 1000;
 		this.maxIntervalPeriod = 2000;
@@ -69,6 +70,17 @@ class RepeatTask {
 		}
 	}
 
+	// Set the task for repeated execution on demand, as controlled by calls to setNextRepeat or advanceNextRepeat. Task execution is performed using taskFunction, which must expect a single "callback" parameter for invocation when the task completes.
+	setOnDemand (taskFunction) {
+		this.isRepeating = false;
+		this.isSuspended = false;
+		this.taskFunction = taskFunction;
+		if (this.executeTimeout != null) {
+			clearTimeout (this.executeTimeout);
+			this.executeTimeout = null;
+		}
+	}
+
 	// Execute the task
 	execute () {
 		if (this.isExecuting) {
@@ -79,11 +91,10 @@ class RepeatTask {
 			clearTimeout (this.executeTimeout);
 			this.executeTimeout = null;
 		}
-
 		this.isExecuting = true;
 		this.nextRepeatPeriod = 0;
-
-		const taskFunctionComplete = () => {
+		this.nextExecuteTime = 0;
+		this.taskFunction (() => {
 			let delay;
 
 			this.isExecuting = false;
@@ -98,13 +109,9 @@ class RepeatTask {
 						delay += Math.round (Math.random () * (this.maxIntervalPeriod - this.minIntervalPeriod));
 					}
 				}
-
-				this.executeTimeout = setTimeout (() => {
-					this.execute ();
-				}, delay);
+				this.setExecuteTimeout (delay);
 			}
-		};
-		this.taskFunction (taskFunctionComplete, this);
+		}, this);
 	}
 
 	// Cancel any repeating execution that might be configured and clear the task function
@@ -128,24 +135,39 @@ class RepeatTask {
 		}
 	}
 
-	// Set the task's next repeat execution to occur after the specified millisecond period elapses
+	// Set the task's next repeat execution to occur after the specified millisecond delay
 	setNextRepeat (msElapsed) {
-		if (! this.isRepeating) {
-			return;
-		}
-
 		this.isSuspended = false;
 		if (this.isExecuting) {
 			this.nextRepeatPeriod = msElapsed;
 			return;
 		}
+		this.setExecuteTimeout (msElapsed);
+	}
 
+	// Set the task's next repeat execution to occur after the specified millisecond delay. If a repeat execution is already scheduled, change its timeout to msElapsed only if that would cause the task to execute sooner.
+	advanceNextRepeat (msElapsed) {
+		if (this.isExecuting) {
+			if ((this.nextRepeatPeriod > 0) && (msElapsed < this.nextRepeatPeriod)) {
+				this.nextRepeatPeriod = msElapsed;
+			}
+			return;
+		}
+		if ((this.executeTimeout != null) && ((this.nextExecuteTime - Date.now ()) <= msElapsed)) {
+			return;
+		}
+		this.setExecuteTimeout (msElapsed);
+	}
+
+	// Set executeTimeout to execute the task after the specified millisecond delay
+	setExecuteTimeout (msElapsed) {
 		if (this.executeTimeout != null) {
 			clearTimeout (this.executeTimeout);
 		}
 		this.executeTimeout = setTimeout (() => {
 			this.execute ();
 		}, msElapsed);
+		this.nextExecuteTime = Date.now () + msElapsed;
 	}
 }
 module.exports = RepeatTask;
