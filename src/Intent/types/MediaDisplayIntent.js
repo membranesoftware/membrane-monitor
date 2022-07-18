@@ -1,5 +1,5 @@
 /*
-* Copyright 2018-2021 Membrane Software <author@membranesoftware.com> https://membranesoftware.com
+* Copyright 2018-2022 Membrane Software <author@membranesoftware.com> https://membranesoftware.com
 *
 * Redistribution and use in source and binary forms, with or without
 * modification, are permitted provided that the following conditions are met:
@@ -47,13 +47,10 @@ class MediaDisplayIntent extends IntentBase {
 		this.displayName = App.uiText.getText ("MediaDisplayIntentName");
 		this.stateType = "MediaDisplayIntentState";
 		this.isDisplayIntent = true;
-
-		// Read-only data members
 		this.isPaused = false;
 		this.lastCommandTime = 0;
 		this.nextCommandTime = 0;
 		this.lastPauseTime = 0;
-
 		this.monitorStatus = { };
 	}
 
@@ -98,16 +95,16 @@ class MediaDisplayIntent extends IntentBase {
 			this.state.minItemDisplayDuration = 300;
 		}
 		else {
-			if (this.state.minItemDisplayDuration < 1) {
-				this.state.minItemDisplayDuration = 1;
+			if (this.state.minItemDisplayDuration < 0) {
+				this.state.minItemDisplayDuration = 0;
 			}
 		}
 		if (typeof this.state.maxItemDisplayDuration != "number") {
 			this.state.maxItemDisplayDuration = 900;
 		}
 		else {
-			if (this.state.maxItemDisplayDuration < 1) {
-				this.state.maxItemDisplayDuration = 1;
+			if (this.state.maxItemDisplayDuration < 0) {
+				this.state.maxItemDisplayDuration = 0;
 			}
 		}
 		if (typeof this.state.minStartPositionDelta != "number") {
@@ -135,7 +132,9 @@ class MediaDisplayIntent extends IntentBase {
 			this.lastPauseTime = now;
 		}
 		else {
-			this.nextCommandTime += (now - this.lastPauseTime);
+			if (this.nextCommandTime > 0) {
+				this.nextCommandTime += (now - this.lastPauseTime);
+			}
 		}
 	}
 
@@ -177,7 +176,12 @@ class MediaDisplayIntent extends IntentBase {
 			this.executePlayCacheStream (item);
 		}
 		this.lastCommandTime = this.updateTime;
-		this.nextCommandTime = this.updateTime + App.systemAgent.getRandomInteger (this.state.minItemDisplayDuration * 1000, this.state.maxItemDisplayDuration * 1000);
+		if ((this.state.minItemDisplayDuration <= 0) || (this.state.maxItemDisplayDuration <= 0)) {
+			this.nextCommandTime = 0;
+		}
+		else {
+			this.nextCommandTime = this.updateTime + App.systemAgent.getRandomInteger (this.state.minItemDisplayDuration * 1000, this.state.maxItemDisplayDuration * 1000);
+		}
 		this.setStage (Resting);
 	}
 
@@ -192,7 +196,7 @@ class MediaDisplayIntent extends IntentBase {
 			this.setStage (Playing);
 			return;
 		}
-		if (this.updateTime >= this.nextCommandTime) {
+		if ((this.nextCommandTime > 0) && (this.updateTime >= this.nextCommandTime)) {
 			this.setStage (Playing);
 			return;
 		}
@@ -214,7 +218,7 @@ class MediaDisplayIntent extends IntentBase {
 				playparams.minStartPositionDelta = this.state.minStartPositionDelta;
 				playparams.maxStartPositionDelta = this.state.maxStartPositionDelta;
 			}
-			const playcmd = App.systemAgent.createCommand ("GetHlsManifest", playparams);
+			const playcmd = App.systemAgent.createCommand (SystemInterface.CommandId.GetHlsManifest, playparams);
 			if (playcmd == null) {
 				return;
 			}
@@ -236,7 +240,7 @@ class MediaDisplayIntent extends IntentBase {
 			params.maxStartPositionDelta = this.state.maxStartPositionDelta;
 		}
 		if ((item.streamId != "") && (typeof item.thumbnailUrl == "string") && (typeof item.thumbnailIndex == "number")) {
-			const thumbnailcmd = App.systemAgent.createCommand ("GetThumbnailImage", {
+			const thumbnailcmd = App.systemAgent.createCommand (SystemInterface.CommandId.GetThumbnailImage, {
 				id: item.streamId,
 				thumbnailIndex: item.thumbnailIndex
 			});
@@ -245,7 +249,7 @@ class MediaDisplayIntent extends IntentBase {
 			}
 		}
 
-		const cmd = App.systemAgent.createCommand ("PlayMedia", params);
+		const cmd = App.systemAgent.createCommand (SystemInterface.CommandId.PlayMedia, params);
 		if (cmd == null) {
 			return;
 		}
@@ -267,7 +271,7 @@ class MediaDisplayIntent extends IntentBase {
 			params.maxStartPositionDelta = this.state.maxStartPositionDelta;
 		}
 
-		const cmd = App.systemAgent.createCommand ("PlayCacheStream", params);
+		const cmd = App.systemAgent.createCommand (SystemInterface.CommandId.PlayCacheStream, params);
 		if (cmd == null) {
 			return;
 		}

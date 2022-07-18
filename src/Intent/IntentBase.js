@@ -1,5 +1,5 @@
 /*
-* Copyright 2018-2021 Membrane Software <author@membranesoftware.com> https://membranesoftware.com
+* Copyright 2018-2022 Membrane Software <author@membranesoftware.com> https://membranesoftware.com
 *
 * Redistribution and use in source and binary forms, with or without
 * modification, are permitted provided that the following conditions are met:
@@ -246,7 +246,7 @@ class IntentBase {
 
 	// Execute actions appropriate when the intent becomes inactive
 	stop () {
-		// Superclass method takes no action
+		this.clearStage ();
 		this.doStop ();
 	}
 
@@ -270,9 +270,6 @@ class IntentBase {
 	}
 
 	clearStage () {
-		if (this.stage === "") {
-			return;
-		}
 		this.stage = "";
 		this.stagePromise = null;
 		this.stagePromiseResult = null;
@@ -303,15 +300,6 @@ class IntentBase {
 		return (new Promise ((resolve, reject) => {
 			setTimeout (resolve, duration);
 		}));
-	}
-
-	// Return an object containing a command with the default agent prefix and the provided parameters, or null if the command could not be validated, in which case an error log message is generated
-	createCommand (commandName, commandParams) {
-		const cmd = SystemInterface.createCommand (App.systemAgent.getCommandPrefix (), commandName, commandParams);
-		if (SystemInterface.isError (cmd)) {
-			return (null);
-		}
-		return (cmd);
 	}
 
 	// Return a boolean value indicating if the specified time period has elapsed, relative to the intent's update time. startTime and period are both measured in milliseconds.

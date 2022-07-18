@@ -1,5 +1,5 @@
 /*
-* Copyright 2018-2021 Membrane Software <author@membranesoftware.com> https://membranesoftware.com
+* Copyright 2018-2022 Membrane Software <author@membranesoftware.com> https://membranesoftware.com
 *
 * Redistribution and use in source and binary forms, with or without
 * modification, are permitted provided that the following conditions are met:
@@ -35,12 +35,13 @@ const Log = require (Path.join (App.SOURCE_DIRECTORY, "Log"));
 const SystemInterface = require (Path.join (App.SOURCE_DIRECTORY, "SystemInterface"));
 const FsUtil = require (Path.join (App.SOURCE_DIRECTORY, "FsUtil"));
 const StringUtil = require (Path.join (App.SOURCE_DIRECTORY, "StringUtil"));
+const WebRequest = require (Path.join (App.SOURCE_DIRECTORY, "WebRequest"));
 const HlsIndexParser = require (Path.join (App.SOURCE_DIRECTORY, "HlsIndexParser"));
-const TaskBase = require (Path.join (App.SOURCE_DIRECTORY, "Task", "TaskBase"));
+const Task = require (Path.join (App.SOURCE_DIRECTORY, "Task", "Task"));
 
-class CacheMediaStream extends TaskBase {
-	constructor () {
-		super ();
+class CacheMediaStreamTask extends Task {
+	constructor (configureMap) {
+		super (configureMap);
 		this.name = App.uiText.getText ("CacheMediaStreamTaskName");
 
 		this.configureParams = [
@@ -118,24 +119,17 @@ class CacheMediaStream extends TaskBase {
 		this.progressPercentDelta = 1;
 	}
 
-	// Subclass method. Implementations should execute actions appropriate when the task has been successfully configured.
-	doConfigure () {
+	async run () {
+		const fields = SystemInterface.parseFields (this.configureParams, this.configureMap);
+		if (SystemInterface.isError (fields)) {
+			throw Error (`${this.toString ()} configuration parse failed; err=${fields}`);
+		}
+		this.configureMap = fields;
 		this.subtitle = this.configureMap.streamName;
 		this.statusMap.streamId = this.configureMap.streamId;
 		this.statusMap.streamName = this.configureMap.streamName;
 		this.streamDataPath = Path.join (this.configureMap.dataPath, this.configureMap.cacheStreamId);
-	}
 
-	// Subclass method. Implementations should execute task actions and call end when complete.
-	doRun () {
-		this.cacheStream ().catch ((err) => {
-			Log.err (`Failed to cache stream; streamName="${this.configureMap.streamName}" err=${err}`);
-		}).then (() => {
-			this.end ();
-		});
-	}
-
-	async cacheStream () {
 		const url = StringUtil.parseUrl (this.configureMap.streamUrl);
 		if (url == null) {
 			throw Error ("Invalid stream URL");
@@ -146,22 +140,33 @@ class CacheMediaStream extends TaskBase {
 		await FsUtil.createDirectory (Path.join (this.streamDataPath, App.StreamThumbnailPath));
 
 		this.baseUrl = `${url.protocol}${App.DoubleSlash}${url.hostname}:${url.port}`;
-		const playcmd = App.systemAgent.createCommand ("GetHlsManifest", {
+		const playcmd = App.systemAgent.createCommand (SystemInterface.CommandId.GetHlsManifest, {
 			streamId: this.configureMap.streamId
 		});
 		if (playcmd == null) {
 			throw Error ("Failed to create GetHlsManifest command");
 		}
-		const manifest = await App.systemAgent.fetchUrlData (`${this.configureMap.streamUrl}?${SystemInterface.Constant.UrlQueryParameter}=${encodeURIComponent (JSON.stringify (playcmd))}`);
+		const manifest = await (new WebRequest (`${this.configureMap.streamUrl}?${SystemInterface.Constant.UrlQueryParameter}=${encodeURIComponent (JSON.stringify (playcmd))}`).get ());
 		this.setPercentComplete (1);
 		await this.fetchSegmentFiles (manifest);
 		this.setPercentComplete (100);
 		this.isSuccess = true;
 	}
 
+	async end () {
+		if (this.isSuccess && (! this.isCancelled)) {
+			return;
+		}
+		FsUtil.removeDirectory (this.streamDataPath, (err) => {
+			if (err != null) {
+				Log.debug (`${this.toString ()} failed to remove data directory; streamDataPath=${this.streamDataPath} err=${err}`);
+			}
+		});
+	}
+
 	// Fetch all segment files referenced in the provided HLS index data and store the resulting base index file
 	async fetchSegmentFiles (hlsIndexData) {
-		let segmentindex, stats, desturl, destfile;
+		let segmentindex, stats, destfile, req;
 
 		const hls = HlsIndexParser.parse (hlsIndexData);
 		if ((hls == null) || (hls.segmentCount <= 0)) {
@@ -187,20 +192,22 @@ class CacheMediaStream extends TaskBase {
 
 		segmentindex = 0;
 		for (const file of hls.segmentFilenames) {
-			desturl = `${this.baseUrl}${file}`;
-			destfile = await App.systemAgent.fetchUrlFile (desturl, Path.join (this.streamDataPath, App.StreamHlsPath), `${segmentindex}.ts`);
+			req = new WebRequest (`${this.baseUrl}${file}`);
+			req.savePath = Path.join (this.streamDataPath, App.StreamHlsPath, `${segmentindex}.ts`);
+			destfile = await req.get ();
 			stats = await FsUtil.statFile (destfile);
 			recordparams.size += stats.size;
 
-			const cmd = App.systemAgent.createCommand ("GetThumbnailImage", {
+			const cmd = App.systemAgent.createCommand (SystemInterface.CommandId.GetThumbnailImage, {
 				id: this.configureMap.streamId,
 				thumbnailIndex: segmentindex
 			});
 			if (cmd == null) {
 				throw Error ("Failed to create GetThumbnailImage command");
 			}
-			desturl = `${this.configureMap.thumbnailUrl}?${SystemInterface.Constant.UrlQueryParameter}=${encodeURIComponent (JSON.stringify (cmd))}`;
-			destfile = await App.systemAgent.fetchUrlFile (desturl, Path.join (this.streamDataPath, App.StreamThumbnailPath), `${segmentindex}.jpg`);
+			req = new WebRequest (`${this.configureMap.thumbnailUrl}?${SystemInterface.Constant.UrlQueryParameter}=${encodeURIComponent (JSON.stringify (cmd))}`);
+			req.savePath = Path.join (this.streamDataPath, App.StreamThumbnailPath, `${segmentindex}.jpg`);
+			destfile = await req.get ();
 			stats = await FsUtil.statFile (destfile);
 			recordparams.size += stats.size;
 			this.addPercentComplete (this.progressPercentDelta);
@@ -208,23 +215,11 @@ class CacheMediaStream extends TaskBase {
 			++segmentindex;
 		}
 
-		const record = App.systemAgent.createCommand ("StreamItem", recordparams);
+		const record = App.systemAgent.createCommand (SystemInterface.CommandId.StreamItem, recordparams);
 		if (record == null) {
 			throw Error ("Failed to create StreamItem record");
 		}
 		await FsUtil.writeFile (Path.join (this.streamDataPath, App.StreamRecordFilename), JSON.stringify (record));
 	}
-
-	// Subclass method. Implementations should execute actions appropriate when the task has ended.
-	doEnd () {
-		if (this.isSuccess && (! this.isCancelled)) {
-			return;
-		}
-		FsUtil.removeDirectory (this.streamDataPath, (err) => {
-			if (err != null) {
-				Log.debug (`${this.toString ()} failed to remove data directory; streamDataPath=${this.streamDataPath} err=${err}`);
-			}
-		});
-	}
 }
-module.exports = CacheMediaStream;
+module.exports = CacheMediaStreamTask;

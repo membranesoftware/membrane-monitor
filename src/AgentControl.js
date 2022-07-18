@@ -1,5 +1,5 @@
 /*
-* Copyright 2018-2021 Membrane Software <author@membranesoftware.com> https://membranesoftware.com
+* Copyright 2018-2022 Membrane Software <author@membranesoftware.com> https://membranesoftware.com
 *
 * Redistribution and use in source and binary forms, with or without
 * modification, are permitted provided that the following conditions are met:
@@ -72,10 +72,22 @@ class AgentControl {
 
 	// Store data received with an AgentStatus command, with an optional targetHost value indicating the address used to get the status data
 	updateAgentStatus (statusCommand, targetHost) {
-		const agent = SysUtil.getMapItem (this.agentMap, statusCommand.params.id, () => {
+		const targetagent = SysUtil.getMapItem (this.agentMap, statusCommand.params.id, () => {
 			return (new Agent ());
 		});
-		agent.updateStatus (statusCommand, targetHost);
+		const isnew = (targetagent.agentId == "");
+		targetagent.updateStatus (statusCommand, targetHost);
+		if (isnew && (typeof targetHost == "object") && (targetHost != null)) {
+			const agents = this.findAgents ((agent) => {
+				return ((agent.targetHostname == targetHost.hostname) && (agent.agentId != statusCommand.params.id));
+			});
+			if (agents.length > 0) {
+				for (const agent of agents) {
+					delete this.agentMap[agent.agentId];
+				}
+				delete this.commandListMap[targetHost.hostname];
+			}
+		}
 	}
 
 	// Expunge expired map records and invoke callback when complete
@@ -166,6 +178,16 @@ class AgentControl {
 		}));
 	}
 
+	// Remove the status data and command list for the agent matching the provided string hostname or SystemInterface AgentHost object
+	removeHostAgent (targetHost) {
+		const hostname = (typeof targetHost == "string") ? targetHost : targetHost.hostname;
+		const agent = this.findHostAgent (hostname);
+		if (agent != null) {
+			delete this.agentMap[agent.agentId];
+			delete this.commandListMap[hostname];
+		}
+	}
+
 	// Return the Agent object associated with the local system agent
 	getLocalAgent () {
 		return (SysUtil.getMapItem (this.agentMap, App.systemAgent.agentId, () => {
@@ -185,7 +207,6 @@ class AgentControl {
 		else {
 			host = targetHost;
 		}
-
 		return (SysUtil.getMapItem (this.commandListMap, host.hostname, () => {
 			return (new CommandList (host));
 		}));
@@ -214,18 +235,23 @@ class Agent {
 		this.createTime = Date.now ();
 		this.targetHostname = "";
 		this.agentId = "";
-		this.version = "";
-		this.uptime = "";
 		this.displayName = "";
 		this.applicationName = "";
 		this.urlHostname = "";
-		this.udpPort = 0;
 		this.tcpPort1 = 0;
 		this.tcpPort2 = 0;
+		this.udpPort = 0;
+		this.linkPath = "";
+		this.uptime = "";
+		this.startTime = 0;
+		this.runDuration = 0;
+		this.version = "";
+		this.nodeVersion = "";
+		this.platform = "";
+		this.isEnabled = false;
+		this.taskCount = 0;
 		this.runCount = 0;
 		this.maxRunCount = 0;
-		this.isEnabled = false;
-		this.linkPath = "";
 		this.lastStatus = { };
 		this.lastStatusTime = 0;
 		this.lastInvokeTime = 0;
@@ -233,28 +259,27 @@ class Agent {
 
 	// Return a string representation of the agent
 	toString () {
-		return (`<Agent id=${this.agentId} targetHostname=${this.targetHostname} displayName=${this.displayName} urlHostname=${this.urlHostname} version=${this.version} linkPath=${this.linkPath} runCount=${this.runCount}/${this.maxRunCount} lastStatusTime=${this.lastStatusTime} lastInvokeTime=${this.lastInvokeTime}>`);
+		const now = Date.now ();
+		const lastStatusTime = (this.lastStatusTime > 0) ? `${this.lastStatusTime}/${this.lastStatusTime - now}` : `${this.lastStatusTime}`;
+		const lastInvokeTime = (this.lastInvokeTime > 0) ? `${this.lastInvokeTime}/${this.lastInvokeTime - now}` : `${this.lastInvokeTime}`;
+		return (`<Agent id=${this.agentId} targetHostname=${this.targetHostname} displayName=${this.displayName} applicationName="${this.applicationName}" urlHostname=${this.urlHostname} version=${this.version} linkPath=${this.linkPath} taskCount=${this.taskCount} runCount=${this.runCount}/${this.maxRunCount} lastStatusTime=${lastStatusTime} lastInvokeTime=${lastInvokeTime} runDuration=${this.runDuration}>`);
 	}
 
 	// Update status with fields from an AgentStatus command, with an optional targetHost value indicating the address used to get the status data
 	updateStatus (statusCommand, targetHost) {
 		this.lastStatus = statusCommand.params;
+		for (const key in statusCommand.params) {
+			if (key == "id") {
+				this.agentId = statusCommand.params[key];
+			}
+			else {
+				if (this[key] !== undefined) {
+					this[key] = statusCommand.params[key];
+				}
+			}
+		}
+
 		this.lastStatusTime = Date.now ();
-
-		this.agentId = statusCommand.params.id;
-		this.version = statusCommand.params.version;
-		this.uptime = statusCommand.params.uptime;
-		this.displayName = statusCommand.params.displayName;
-		this.applicationName = statusCommand.params.applicationName;
-		this.urlHostname = statusCommand.params.urlHostname;
-		this.udpPort = statusCommand.params.udpPort;
-		this.tcpPort1 = statusCommand.params.tcpPort1;
-		this.tcpPort2 = statusCommand.params.tcpPort2;
-		this.linkPath = statusCommand.params.linkPath;
-		this.runCount = statusCommand.params.runCount;
-		this.maxRunCount = statusCommand.params.maxRunCount;
-		this.isEnabled = statusCommand.params.isEnabled;
-
 		if ((typeof targetHost == "object") && (targetHost != null)) {
 			this.targetHostname = targetHost.hostname;
 		}
@@ -265,11 +290,10 @@ class Agent {
 		if (typeof referenceTime != "number") {
 			referenceTime = Date.now ();
 		}
-
-		if ((referenceTime - this.lastStatusTime) < timeout) {
+		if ((this.lastStatusTime > 0) && ((referenceTime - this.lastStatusTime) < timeout)) {
 			return (false);
 		}
-		if ((referenceTime - this.lastInvokeTime) < timeout) {
+		if ((this.lastInvokeTime > 0) && ((referenceTime - this.lastInvokeTime) < timeout)) {
 			return (false);
 		}
 		return (true);

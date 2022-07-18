@@ -1,5 +1,5 @@
 /*
-* Copyright 2018-2021 Membrane Software <author@membranesoftware.com> https://membranesoftware.com
+* Copyright 2018-2022 Membrane Software <author@membranesoftware.com> https://membranesoftware.com
 *
 * Redistribution and use in source and binary forms, with or without
 * modification, are permitted provided that the following conditions are met:
@@ -33,6 +33,7 @@ const App = require ("./App");
 const Path = require ("path");
 const Log = require (Path.join (App.SOURCE_DIRECTORY, "Log"));
 const FsUtil = require (Path.join (App.SOURCE_DIRECTORY, "FsUtil"));
+const OsUtil = require (Path.join (App.SOURCE_DIRECTORY, "OsUtil"));
 const SystemAgent = require (Path.join (App.SOURCE_DIRECTORY, "SystemAgent"));
 const SystemInterface = require (Path.join (App.SOURCE_DIRECTORY, "SystemInterface"));
 const UiText = require (Path.join (App.SOURCE_DIRECTORY, "UiText", "UiText"));
@@ -201,7 +202,7 @@ if (typeof process.env.DATA_DIRECTORY == "string") {
 	App.DATA_DIRECTORY = process.env.DATA_DIRECTORY;
 }
 else {
-	if (App.IsWindows && (typeof process.env.LOCALAPPDATA == "string")) {
+	if (OsUtil.isWindows && (typeof process.env.LOCALAPPDATA == "string")) {
 		App.DATA_DIRECTORY = Path.join (process.env.LOCALAPPDATA, App.APPLICATION_NAME);
 	}
 }
@@ -250,6 +251,25 @@ if (conf != null) {
 	App.MaxTaskCount = fields.MaxTaskCount;
 	App.OpensslPath = fields.OpensslPath;
 	App.Language = fields.Language;
+}
+
+if (typeof process.env.EXT_TCP_PORT1 == "string") {
+	const n = parseInt (process.env.EXT_TCP_PORT1, 10);
+	if ((! isNaN (n)) && (n >= 1) && (n <= 65535)) {
+		App.ExtTcpPort1 = n;
+	}
+}
+if (typeof process.env.EXT_TCP_PORT2 == "string") {
+	const n = parseInt (process.env.EXT_TCP_PORT2, 10);
+	if ((! isNaN (n)) && (n >= 1) && (n <= 65535)) {
+		App.ExtTcpPort2 = n;
+	}
+}
+if (typeof process.env.EXT_UDP_PORT == "string") {
+	const n = parseInt (process.env.EXT_UDP_PORT, 10);
+	if ((! isNaN (n)) && (n >= 1) && (n <= 65535)) {
+		App.ExtUdpPort = n;
+	}
 }
 
 // TODO: Check for an environment value specifying text language

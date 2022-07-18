@@ -1,5 +1,5 @@
 /*
-* Copyright 2018-2021 Membrane Software <author@membranesoftware.com> https://membranesoftware.com
+* Copyright 2018-2022 Membrane Software <author@membranesoftware.com> https://membranesoftware.com
 *
 * Redistribution and use in source and binary forms, with or without
 * modification, are permitted provided that the following conditions are met:
@@ -96,16 +96,16 @@ class StreamCacheDisplayIntent extends IntentBase {
 			this.state.minItemDisplayDuration = 300;
 		}
 		else {
-			if (this.state.minItemDisplayDuration < 1) {
-				this.state.minItemDisplayDuration = 1;
+			if (this.state.minItemDisplayDuration < 0) {
+				this.state.minItemDisplayDuration = 0;
 			}
 		}
 		if (typeof this.state.maxItemDisplayDuration != "number") {
 			this.state.maxItemDisplayDuration = 900;
 		}
 		else {
-			if (this.state.maxItemDisplayDuration < 1) {
-				this.state.maxItemDisplayDuration = 1;
+			if (this.state.maxItemDisplayDuration < 0) {
+				this.state.maxItemDisplayDuration = 0;
 			}
 		}
 		if (typeof this.state.minStartPositionDelta != "number") {
@@ -132,7 +132,9 @@ class StreamCacheDisplayIntent extends IntentBase {
 			this.lastPauseTime = now;
 		}
 		else {
-			this.nextCommandTime += (now - this.lastPauseTime);
+			if (this.nextCommandTime > 0) {
+				this.nextCommandTime += (now - this.lastPauseTime);
+			}
 		}
 	}
 
@@ -204,7 +206,7 @@ class StreamCacheDisplayIntent extends IntentBase {
 			params.minStartPositionDelta = this.state.minStartPositionDelta;
 			params.maxStartPositionDelta = this.state.maxStartPositionDelta;
 		}
-		const cmd = App.systemAgent.createCommand ("PlayCacheStream", params);
+		const cmd = App.systemAgent.createCommand (SystemInterface.CommandId.PlayCacheStream, params);
 		if (cmd == null) {
 			return;
 		}
@@ -213,7 +215,12 @@ class StreamCacheDisplayIntent extends IntentBase {
 		});
 
 		this.lastCommandTime = this.updateTime;
-		this.nextCommandTime = this.updateTime + App.systemAgent.getRandomInteger (this.state.minItemDisplayDuration * 1000, this.state.maxItemDisplayDuration * 1000);
+		if ((this.state.minItemDisplayDuration <= 0) || (this.state.maxItemDisplayDuration <= 0)) {
+			this.nextCommandTime = 0;
+		}
+		else {
+			this.nextCommandTime = this.updateTime + App.systemAgent.getRandomInteger (this.state.minItemDisplayDuration * 1000, this.state.maxItemDisplayDuration * 1000);
+		}
 		this.stageAwait (this.readStreamCache (), Resting);
 	}
 
@@ -228,7 +235,7 @@ class StreamCacheDisplayIntent extends IntentBase {
 			this.setStage (Playing);
 			return;
 		}
-		if (this.updateTime >= this.nextCommandTime) {
+		if ((this.nextCommandTime > 0) && (this.updateTime >= this.nextCommandTime)) {
 			this.setStage (Playing);
 			return;
 		}

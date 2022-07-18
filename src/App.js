@@ -1,5 +1,5 @@
 /*
-* Copyright 2018-2021 Membrane Software <author@membranesoftware.com> https://membranesoftware.com
+* Copyright 2018-2022 Membrane Software <author@membranesoftware.com> https://membranesoftware.com
 *
 * Redistribution and use in source and binary forms, with or without
 * modification, are permitted provided that the following conditions are met:
@@ -35,7 +35,7 @@ const Path = require ("path");
 
 exports.APPLICATION_NAME = "Membrane Monitor";
 exports.APPLICATION_PACKAGE_NAME = "MembraneMonitor";
-exports.VERSION = "29-stable-e9248737";
+exports.VERSION = "36-stable-6343c7bb";
 exports.AGENT_PLATFORM = "";
 
 exports.BASE_DIRECTORY = process.cwd ();
@@ -53,6 +53,9 @@ exports.UrlHostname = null;
 exports.TcpPort1 = 63738;
 exports.TcpPort2 = 63739;
 exports.UdpPort = 63738;
+exports.ExtTcpPort1 = 0;
+exports.ExtTcpPort2 = 0;
+exports.ExtUdpPort = 0;
 exports.LinkPath = "/";
 exports.EnableHttps = true;
 exports.AuthorizePath = "auth";
@@ -64,10 +67,6 @@ exports.MaxTaskCount = 1;
 exports.OpensslPath = "";
 exports.Language = "";
 
-exports.IsWindows = Array.isArray (exports.AGENT_PLATFORM.match (/^win/i));
-exports.IsLinux = (process.platform === "linux");
-exports.IsMacos = (process.platform === "darwin");
-exports.ApplicationNewsUrl = "https://membranesoftware.com/application-news/";
 exports.IntentWritePeriod = 300; // seconds
 exports.HeartbeatPeriod = 500; // milliseconds
 exports.OpensslConfigFilename = "openssl.cnf";
@@ -77,6 +76,7 @@ exports.TlsCertFilename = "tls-cert.pem";
 exports.TlsCaPath = "/etc/ssl/certs/ca-certificates.crt";
 exports.Slash = "/";
 exports.DoubleSlash = `${exports.Slash}${exports.Slash}`;
+exports.ApplicationNewsUrl = `https:${exports.DoubleSlash}membranesoftware.com/application-news/`;
 exports.StreamCachePath = "stream-cache";
 exports.StreamHlsPath = "hls";
 exports.StreamDashPath = "dash";

@@ -27,10 +27,28 @@
 * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 * POSSIBILITY OF SUCH DAMAGE.
 */
-// Server subclasses
-
 "use strict";
 
-const ServerTypes = require ("./types");
+const App = global.App || { };
+const Path = require ("path");
+const Task = require (Path.join (App.SOURCE_DIRECTORY, "Task", "Task"));
 
-exports.ServerTypes = ServerTypes;
+class ExecuteTask extends Task {
+	constructor (configureMap) {
+		super (configureMap);
+	}
+
+	async run () {
+		if (typeof this.configureMap.run == "function") {
+			await this.configureMap.run ();
+		}
+		this.isSuccess = true;
+	}
+
+	async end () {
+		if (typeof this.configureMap.end == "function") {
+			await this.configureMap.end ();
+		}
+	}
+}
+module.exports = ExecuteTask;

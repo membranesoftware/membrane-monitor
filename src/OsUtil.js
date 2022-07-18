@@ -1,5 +1,5 @@
 /*
-* Copyright 2018-2021 Membrane Software <author@membranesoftware.com> https://membranesoftware.com
+* Copyright 2018-2022 Membrane Software <author@membranesoftware.com> https://membranesoftware.com
 *
 * Redistribution and use in source and binary forms, with or without
 * modification, are permitted provided that the following conditions are met:
@@ -27,21 +27,16 @@
 * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 * POSSIBILITY OF SUCH DAMAGE.
 */
-// Export all files found in this directory
+// Utilities for operating system functions
 
 "use strict";
 
-const Fs = require ("fs");
+const App = global.App || { };
 
-const files = Fs.readdirSync (__dirname);
-for (let i = 0; i < files.length; ++i) {
-	const path = files[i];
-	if (path == "index.js") {
-		continue;
-	}
-	const m = path.match (/^(.*)\.js$/);
-	if (m == null) {
-		continue;
-	}
-	exports[m[1]] = require (`./${path}`);
-}
+exports.isLinux = (process.platform === "linux");
+exports.isMacos = Array.isArray (App.AGENT_PLATFORM.match (/^macos/i));
+exports.isUbuntu = Array.isArray (App.AGENT_PLATFORM.match (/^ubuntu/i));
+exports.isRaspios = Array.isArray (App.AGENT_PLATFORM.match (/^raspios/i));
+exports.isRaspiosBuster = Array.isArray (App.AGENT_PLATFORM.match (/^raspios10-/i));
+exports.isRaspiosBullseye = Array.isArray (App.AGENT_PLATFORM.match (/^raspios11-/i));
+exports.isWindows = Array.isArray (App.AGENT_PLATFORM.match (/^win/i));

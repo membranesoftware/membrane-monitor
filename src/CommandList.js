@@ -1,5 +1,5 @@
 /*
-* Copyright 2018-2021 Membrane Software <author@membranesoftware.com> https://membranesoftware.com
+* Copyright 2018-2022 Membrane Software <author@membranesoftware.com> https://membranesoftware.com
 *
 * Redistribution and use in source and binary forms, with or without
 * modification, are permitted provided that the following conditions are met:
@@ -176,7 +176,7 @@ class CommandList {
 		}
 
 		try {
-			const authcmd = App.systemAgent.createCommand ("Authorize", {
+			const authcmd = App.systemAgent.createCommand (SystemInterface.CommandId.Authorize, {
 				token: App.systemAgent.getRandomString (App.AuthorizeTokenLength)
 			}, authsecret, null);
 			const response = await this.sendInvokeCommand ((authpath.length > 0) ? authpath : SystemInterface.Constant.DefaultAuthorizePath, authcmd, SystemInterface.CommandId.AuthorizeResult);
@@ -266,7 +266,7 @@ class CommandList {
 			if (App.EnableHttps) {
 				options.protocol = "https:";
 				options.agent = new Https.Agent ({
-					// TODO: Possibly set the "ca" option (certificate authority block) here instead of rejectUnauthorized, i.e. Fs.readFileSync ("tls-cert.pem")
+					// TODO: Possibly set the "ca" option (certificate authority block) here instead of rejectUnauthorized=false
 					rejectUnauthorized: false
 				});
 				req = Https.request (options, requestStarted);

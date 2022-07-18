@@ -1,5 +1,5 @@
 /*
-* Copyright 2018-2021 Membrane Software <author@membranesoftware.com> https://membranesoftware.com
+* Copyright 2018-2022 Membrane Software <author@membranesoftware.com> https://membranesoftware.com
 *
 * Redistribution and use in source and binary forms, with or without
 * modification, are permitted provided that the following conditions are met:
@@ -36,11 +36,12 @@ const SystemInterface = require (Path.join (App.SOURCE_DIRECTORY, "SystemInterfa
 const IntentBase = require (Path.join (App.SOURCE_DIRECTORY, "Intent", "IntentBase"));
 
 const MinRestingPeriod = 15000; // milliseconds
-const CountdownTime = 20000; // milliseconds
+const CountdownTime = 30000; // milliseconds
 
 // Stage names
 const Initializing = "initializing";
 const ShowingUrl = "showingUrl";
+const Countdown = "countdown";
 const Resting = "resting";
 
 class WebDisplayIntent extends IntentBase {
@@ -51,7 +52,7 @@ class WebDisplayIntent extends IntentBase {
 		this.isDisplayIntent = true;
 		this.lastCommandTime = 0;
 		this.nextCommandTime = 0;
-		this.isCountdownShown = false;
+		this.lastCountdownTime = 0;
 		this.monitorStatus = { };
 	}
 
@@ -105,7 +106,7 @@ class WebDisplayIntent extends IntentBase {
 
 		this.lastCommandTime = 0;
 		this.nextCommandTime = 0;
-		this.isCountdownShown = false;
+		this.lastCountdownTime = 0;
 		this.monitorStatus = { };
 	}
 
@@ -145,14 +146,29 @@ class WebDisplayIntent extends IntentBase {
 		if (typeof url != "string") {
 			return;
 		}
-		App.systemAgent.agentControl.invokeCommand (App.systemAgent.agentId, SystemInterface.Constant.DefaultInvokePath, App.systemAgent.createCommand ("ShowWebUrl", { url: url }), SystemInterface.CommandId.CommandResult).catch ((err) => {
+		App.systemAgent.agentControl.invokeCommand (App.systemAgent.agentId, SystemInterface.Constant.DefaultInvokePath, App.systemAgent.createCommand (SystemInterface.CommandId.ShowWebUrl, { url: url }), SystemInterface.CommandId.CommandResult).catch ((err) => {
 			Log.debug (`${this.toString ()} failed to invoke ShowWebUrl; err=${err}`);
 		});
 
 		this.lastCommandTime = this.updateTime;
 		this.nextCommandTime = this.updateTime + App.systemAgent.getRandomInteger (this.state.minItemDisplayDuration * 1000, this.state.maxItemDisplayDuration * 1000);
-		this.isCountdownShown = false;
+		this.lastCountdownTime = 0;
 		this.setStage (Resting);
+	}
+
+	countdown () {
+		if (this.lastCountdownTime <= 0) {
+			this.lastCountdownTime = this.updateTime;
+		}
+		if (this.monitorStatus.displayState !== SystemInterface.Constant.ShowUrlDisplayState) {
+			this.setStage (ShowingUrl);
+			return;
+		}
+		const t = (this.lastCountdownTime + CountdownTime);
+		if (this.updateTime >= t) {
+			this.setStage (ShowingUrl);
+			return;
+		}
 	}
 
 	resting () {
@@ -163,20 +179,16 @@ class WebDisplayIntent extends IntentBase {
 			this.setStage (ShowingUrl);
 			return;
 		}
+		if ((this.lastCountdownTime <= 0) && (this.updateTime >= (this.nextCommandTime - CountdownTime))) {
+			const t = this.nextCommandTime - Date.now ();
+			this.stageAwait (App.systemAgent.agentControl.invokeCommand (App.systemAgent.agentId, SystemInterface.Constant.DefaultInvokePath, App.systemAgent.createCommand (SystemInterface.CommandId.ShowDesktopCountdown, {
+				countdownTime: (t > 0) ? t : CountdownTime
+			}), SystemInterface.CommandId.CommandResult), Countdown);
+			return;
+		}
 		if (this.updateTime >= this.nextCommandTime) {
 			this.setStage (ShowingUrl);
 			return;
-		}
-		if (! this.isCountdownShown) {
-			if (this.updateTime >= (this.nextCommandTime - CountdownTime)) {
-				this.isCountdownShown = true;
-				const t = this.nextCommandTime - Date.now ();
-				App.systemAgent.agentControl.invokeCommand (App.systemAgent.agentId, SystemInterface.Constant.DefaultInvokePath, App.systemAgent.createCommand ("ShowDesktopCountdown", {
-					countdownTime: (t > 0) ? t : CountdownTime
-				}), SystemInterface.CommandId.CommandResult).catch ((err) => {
-					Log.debug (`${this.toString ()} failed to invoke ShowDesktopCountdown; err=${err}`);
-				});
-			}
 		}
 	}
 }

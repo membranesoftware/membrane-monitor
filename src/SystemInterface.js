@@ -1,5 +1,5 @@
 /*
-* Copyright 2018-2021 Membrane Software <author@membranesoftware.com> https://membranesoftware.com
+* Copyright 2018-2022 Membrane Software <author@membranesoftware.com> https://membranesoftware.com
 *
 * Redistribution and use in source and binary forms, with or without
 * modification, are permitted provided that the following conditions are met:
@@ -30,8 +30,9 @@
 // Functions for use in sending or receiving remote commands
 
 var SystemInterface = exports;
-SystemInterface.Version = "23-stable-c19b2321";
+SystemInterface.Version = "25-stable-71094b9f";
 SystemInterface.Command = { };
+SystemInterface.Command.AddMediaTag = {"id":233,"name":"AddMediaTag","paramType":"AddMediaTag"};
 SystemInterface.Command.AgentConfiguration = {"id":45,"name":"AgentConfiguration","paramType":"AgentConfiguration"};
 SystemInterface.Command.AgentContact = {"id":33,"name":"AgentContact","paramType":"AgentContact"};
 SystemInterface.Command.AgentStatus = {"id":1,"name":"AgentStatus","paramType":"AgentStatus"};
@@ -39,8 +40,9 @@ SystemInterface.Command.ApplicationNews = {"id":64,"name":"ApplicationNews","par
 SystemInterface.Command.AuthorizationRequired = {"id":62,"name":"AuthorizationRequired","paramType":"EmptyObject"};
 SystemInterface.Command.Authorize = {"id":19,"name":"Authorize","paramType":"Authorize"};
 SystemInterface.Command.AuthorizeResult = {"id":13,"name":"AuthorizeResult","paramType":"AuthorizeResult"};
-SystemInterface.Command.CameraDisplayIntentState = {"id":108,"name":"CameraDisplayIntentState","paramType":"CameraDisplayIntentState"};
+SystemInterface.Command.CameraImageDisplayIntentState = {"id":108,"name":"CameraImageDisplayIntentState","paramType":"CameraImageDisplayIntentState"};
 SystemInterface.Command.CameraServerStatus = {"id":69,"name":"CameraServerStatus","paramType":"CameraServerStatus"};
+SystemInterface.Command.CameraStreamDisplayIntentState = {"id":239,"name":"CameraStreamDisplayIntentState","paramType":"CameraStreamDisplayIntentState"};
 SystemInterface.Command.CancelTask = {"id":28,"name":"CancelTask","paramType":"CancelTask"};
 SystemInterface.Command.ClearCache = {"id":59,"name":"ClearCache","paramType":"EmptyObject"};
 SystemInterface.Command.ClearDisplay = {"id":31,"name":"ClearDisplay","paramType":"EmptyObject"};
@@ -49,7 +51,8 @@ SystemInterface.Command.CommandResult = {"id":0,"name":"CommandResult","paramTyp
 SystemInterface.Command.ConfigureCamera = {"id":109,"name":"ConfigureCamera","paramType":"ConfigureCamera"};
 SystemInterface.Command.ConfigureMediaStream = {"id":65,"name":"ConfigureMediaStream","paramType":"ConfigureMediaStream"};
 SystemInterface.Command.CreateCacheStream = {"id":60,"name":"CreateCacheStream","paramType":"CreateCacheStream"};
-SystemInterface.Command.CreateCameraDisplayIntent = {"id":107,"name":"CreateCameraDisplayIntent","paramType":"CreateCameraDisplayIntent"};
+SystemInterface.Command.CreateCameraImageDisplayIntent = {"id":107,"name":"CreateCameraImageDisplayIntent","paramType":"CreateCameraImageDisplayIntent"};
+SystemInterface.Command.CreateCameraStreamDisplayIntent = {"id":238,"name":"CreateCameraStreamDisplayIntent","paramType":"CreateCameraStreamDisplayIntent"};
 SystemInterface.Command.CreateMediaDisplayIntent = {"id":50,"name":"CreateMediaDisplayIntent","paramType":"CreateMediaDisplayIntent"};
 SystemInterface.Command.CreateMediaStream = {"id":14,"name":"CreateMediaStream","paramType":"CreateMediaStream"};
 SystemInterface.Command.CreateMonitorProgram = {"id":102,"name":"CreateMonitorProgram","paramType":"CreateMonitorProgram"};
@@ -69,6 +72,7 @@ SystemInterface.Command.GetAgentConfiguration = {"id":44,"name":"GetAgentConfigu
 SystemInterface.Command.GetCameraStream = {"id":100,"name":"GetCameraStream","paramType":"GetCameraStream"};
 SystemInterface.Command.GetCameraStreamResult = {"id":101,"name":"GetCameraStreamResult","paramType":"GetCameraStreamResult"};
 SystemInterface.Command.GetCaptureImage = {"id":73,"name":"GetCaptureImage","paramType":"GetCaptureImage"};
+SystemInterface.Command.GetCaptureVideo = {"id":235,"name":"GetCaptureVideo","paramType":"GetCaptureVideo"};
 SystemInterface.Command.GetDashMpd = {"id":67,"name":"GetDashMpd","paramType":"GetDashMpd"};
 SystemInterface.Command.GetDashSegment = {"id":68,"name":"GetDashSegment","paramType":"GetDashSegment"};
 SystemInterface.Command.GetHlsManifest = {"id":23,"name":"GetHlsManifest","paramType":"GetHlsManifest"};
@@ -91,6 +95,7 @@ SystemInterface.Command.PlayMedia = {"id":30,"name":"PlayMedia","paramType":"Pla
 SystemInterface.Command.ReadTasks = {"id":6,"name":"ReadTasks","paramType":"EmptyObject"};
 SystemInterface.Command.RemoveIntent = {"id":37,"name":"RemoveIntent","paramType":"RemoveIntent"};
 SystemInterface.Command.RemoveMedia = {"id":77,"name":"RemoveMedia","paramType":"RemoveMedia"};
+SystemInterface.Command.RemoveMediaTag = {"id":234,"name":"RemoveMediaTag","paramType":"RemoveMediaTag"};
 SystemInterface.Command.RemoveStream = {"id":29,"name":"RemoveStream","paramType":"RemoveStream"};
 SystemInterface.Command.RemoveWindow = {"id":217,"name":"RemoveWindow","paramType":"RemoveWindow"};
 SystemInterface.Command.ReportContact = {"id":32,"name":"ReportContact","paramType":"ReportContact"};
@@ -123,6 +128,7 @@ SystemInterface.Command.WatchStatus = {"id":82,"name":"WatchStatus","paramType":
 SystemInterface.Command.WatchTasks = {"id":7,"name":"WatchTasks","paramType":"WatchTasks"};
 SystemInterface.Command.WebDisplayIntentState = {"id":49,"name":"WebDisplayIntentState","paramType":"WebDisplayIntentState"};
 SystemInterface.CommandId = { };
+SystemInterface.CommandId.AddMediaTag = 233;
 SystemInterface.CommandId.AgentConfiguration = 45;
 SystemInterface.CommandId.AgentContact = 33;
 SystemInterface.CommandId.AgentStatus = 1;
@@ -130,8 +136,9 @@ SystemInterface.CommandId.ApplicationNews = 64;
 SystemInterface.CommandId.AuthorizationRequired = 62;
 SystemInterface.CommandId.Authorize = 19;
 SystemInterface.CommandId.AuthorizeResult = 13;
-SystemInterface.CommandId.CameraDisplayIntentState = 108;
+SystemInterface.CommandId.CameraImageDisplayIntentState = 108;
 SystemInterface.CommandId.CameraServerStatus = 69;
+SystemInterface.CommandId.CameraStreamDisplayIntentState = 239;
 SystemInterface.CommandId.CancelTask = 28;
 SystemInterface.CommandId.ClearCache = 59;
 SystemInterface.CommandId.ClearDisplay = 31;
@@ -140,7 +147,8 @@ SystemInterface.CommandId.CommandResult = 0;
 SystemInterface.CommandId.ConfigureCamera = 109;
 SystemInterface.CommandId.ConfigureMediaStream = 65;
 SystemInterface.CommandId.CreateCacheStream = 60;
-SystemInterface.CommandId.CreateCameraDisplayIntent = 107;
+SystemInterface.CommandId.CreateCameraImageDisplayIntent = 107;
+SystemInterface.CommandId.CreateCameraStreamDisplayIntent = 238;
 SystemInterface.CommandId.CreateMediaDisplayIntent = 50;
 SystemInterface.CommandId.CreateMediaStream = 14;
 SystemInterface.CommandId.CreateMonitorProgram = 102;
@@ -160,6 +168,7 @@ SystemInterface.CommandId.GetAgentConfiguration = 44;
 SystemInterface.CommandId.GetCameraStream = 100;
 SystemInterface.CommandId.GetCameraStreamResult = 101;
 SystemInterface.CommandId.GetCaptureImage = 73;
+SystemInterface.CommandId.GetCaptureVideo = 235;
 SystemInterface.CommandId.GetDashMpd = 67;
 SystemInterface.CommandId.GetDashSegment = 68;
 SystemInterface.CommandId.GetHlsManifest = 23;
@@ -182,6 +191,7 @@ SystemInterface.CommandId.PlayMedia = 30;
 SystemInterface.CommandId.ReadTasks = 6;
 SystemInterface.CommandId.RemoveIntent = 37;
 SystemInterface.CommandId.RemoveMedia = 77;
+SystemInterface.CommandId.RemoveMediaTag = 234;
 SystemInterface.CommandId.RemoveStream = 29;
 SystemInterface.CommandId.RemoveWindow = 217;
 SystemInterface.CommandId.ReportContact = 32;
@@ -213,7 +223,104 @@ SystemInterface.CommandId.UpdateIntentState = 39;
 SystemInterface.CommandId.WatchStatus = 82;
 SystemInterface.CommandId.WatchTasks = 7;
 SystemInterface.CommandId.WebDisplayIntentState = 49;
+SystemInterface.CommandIdMap = { };
+SystemInterface.CommandIdMap["233"] = SystemInterface.Command.AddMediaTag;
+SystemInterface.CommandIdMap["45"] = SystemInterface.Command.AgentConfiguration;
+SystemInterface.CommandIdMap["33"] = SystemInterface.Command.AgentContact;
+SystemInterface.CommandIdMap["1"] = SystemInterface.Command.AgentStatus;
+SystemInterface.CommandIdMap["64"] = SystemInterface.Command.ApplicationNews;
+SystemInterface.CommandIdMap["62"] = SystemInterface.Command.AuthorizationRequired;
+SystemInterface.CommandIdMap["19"] = SystemInterface.Command.Authorize;
+SystemInterface.CommandIdMap["13"] = SystemInterface.Command.AuthorizeResult;
+SystemInterface.CommandIdMap["108"] = SystemInterface.Command.CameraImageDisplayIntentState;
+SystemInterface.CommandIdMap["69"] = SystemInterface.Command.CameraServerStatus;
+SystemInterface.CommandIdMap["239"] = SystemInterface.Command.CameraStreamDisplayIntentState;
+SystemInterface.CommandIdMap["28"] = SystemInterface.Command.CancelTask;
+SystemInterface.CommandIdMap["59"] = SystemInterface.Command.ClearCache;
+SystemInterface.CommandIdMap["31"] = SystemInterface.Command.ClearDisplay;
+SystemInterface.CommandIdMap["76"] = SystemInterface.Command.ClearTimelapse;
+SystemInterface.CommandIdMap["0"] = SystemInterface.Command.CommandResult;
+SystemInterface.CommandIdMap["109"] = SystemInterface.Command.ConfigureCamera;
+SystemInterface.CommandIdMap["65"] = SystemInterface.Command.ConfigureMediaStream;
+SystemInterface.CommandIdMap["60"] = SystemInterface.Command.CreateCacheStream;
+SystemInterface.CommandIdMap["107"] = SystemInterface.Command.CreateCameraImageDisplayIntent;
+SystemInterface.CommandIdMap["238"] = SystemInterface.Command.CreateCameraStreamDisplayIntent;
+SystemInterface.CommandIdMap["50"] = SystemInterface.Command.CreateMediaDisplayIntent;
+SystemInterface.CommandIdMap["14"] = SystemInterface.Command.CreateMediaStream;
+SystemInterface.CommandIdMap["102"] = SystemInterface.Command.CreateMonitorProgram;
+SystemInterface.CommandIdMap["103"] = SystemInterface.Command.CreateStreamCacheDisplayIntent;
+SystemInterface.CommandIdMap["70"] = SystemInterface.Command.CreateTimelapseCaptureIntent;
+SystemInterface.CommandIdMap["35"] = SystemInterface.Command.CreateWebDisplayIntent;
+SystemInterface.CommandIdMap["21"] = SystemInterface.Command.EndSet;
+SystemInterface.CommandIdMap["74"] = SystemInterface.Command.FindCaptureImages;
+SystemInterface.CommandIdMap["75"] = SystemInterface.Command.FindCaptureImagesResult;
+SystemInterface.CommandIdMap["3"] = SystemInterface.Command.FindMediaItems;
+SystemInterface.CommandIdMap["48"] = SystemInterface.Command.FindMediaItemsResult;
+SystemInterface.CommandIdMap["78"] = SystemInterface.Command.FindMediaStreams;
+SystemInterface.CommandIdMap["79"] = SystemInterface.Command.FindMediaStreamsResult;
+SystemInterface.CommandIdMap["211"] = SystemInterface.Command.FindStreamItems;
+SystemInterface.CommandIdMap["4"] = SystemInterface.Command.FindStreamItemsResult;
+SystemInterface.CommandIdMap["44"] = SystemInterface.Command.GetAgentConfiguration;
+SystemInterface.CommandIdMap["100"] = SystemInterface.Command.GetCameraStream;
+SystemInterface.CommandIdMap["101"] = SystemInterface.Command.GetCameraStreamResult;
+SystemInterface.CommandIdMap["73"] = SystemInterface.Command.GetCaptureImage;
+SystemInterface.CommandIdMap["235"] = SystemInterface.Command.GetCaptureVideo;
+SystemInterface.CommandIdMap["67"] = SystemInterface.Command.GetDashMpd;
+SystemInterface.CommandIdMap["68"] = SystemInterface.Command.GetDashSegment;
+SystemInterface.CommandIdMap["23"] = SystemInterface.Command.GetHlsManifest;
+SystemInterface.CommandIdMap["24"] = SystemInterface.Command.GetHlsSegment;
+SystemInterface.CommandIdMap["15"] = SystemInterface.Command.GetMedia;
+SystemInterface.CommandIdMap["8"] = SystemInterface.Command.GetStatus;
+SystemInterface.CommandIdMap["25"] = SystemInterface.Command.GetStreamItem;
+SystemInterface.CommandIdMap["5"] = SystemInterface.Command.GetThumbnailImage;
+SystemInterface.CommandIdMap["36"] = SystemInterface.Command.IntentState;
+SystemInterface.CommandIdMap["63"] = SystemInterface.Command.LinkSuccess;
+SystemInterface.CommandIdMap["51"] = SystemInterface.Command.MediaDisplayIntentState;
+SystemInterface.CommandIdMap["16"] = SystemInterface.Command.MediaItem;
+SystemInterface.CommandIdMap["9"] = SystemInterface.Command.MediaServerStatus;
+SystemInterface.CommandIdMap["12"] = SystemInterface.Command.MonitorServerStatus;
+SystemInterface.CommandIdMap["98"] = SystemInterface.Command.PauseMedia;
+SystemInterface.CommandIdMap["215"] = SystemInterface.Command.PlayAnimation;
+SystemInterface.CommandIdMap["57"] = SystemInterface.Command.PlayCacheStream;
+SystemInterface.CommandIdMap["99"] = SystemInterface.Command.PlayCameraStream;
+SystemInterface.CommandIdMap["30"] = SystemInterface.Command.PlayMedia;
+SystemInterface.CommandIdMap["6"] = SystemInterface.Command.ReadTasks;
+SystemInterface.CommandIdMap["37"] = SystemInterface.Command.RemoveIntent;
+SystemInterface.CommandIdMap["77"] = SystemInterface.Command.RemoveMedia;
+SystemInterface.CommandIdMap["234"] = SystemInterface.Command.RemoveMediaTag;
+SystemInterface.CommandIdMap["29"] = SystemInterface.Command.RemoveStream;
+SystemInterface.CommandIdMap["217"] = SystemInterface.Command.RemoveWindow;
+SystemInterface.CommandIdMap["32"] = SystemInterface.Command.ReportContact;
+SystemInterface.CommandIdMap["2"] = SystemInterface.Command.ReportStatus;
+SystemInterface.CommandIdMap["58"] = SystemInterface.Command.ScanMediaItems;
+SystemInterface.CommandIdMap["20"] = SystemInterface.Command.ServerError;
+SystemInterface.CommandIdMap["61"] = SystemInterface.Command.SetAdminSecret;
+SystemInterface.CommandIdMap["38"] = SystemInterface.Command.SetIntentActive;
+SystemInterface.CommandIdMap["41"] = SystemInterface.Command.ShowAgentStatus;
+SystemInterface.CommandIdMap["105"] = SystemInterface.Command.ShowCameraImage;
+SystemInterface.CommandIdMap["40"] = SystemInterface.Command.ShowColorFillBackground;
+SystemInterface.CommandIdMap["219"] = SystemInterface.Command.ShowCountdownWindow;
+SystemInterface.CommandIdMap["218"] = SystemInterface.Command.ShowDesktopCountdown;
+SystemInterface.CommandIdMap["106"] = SystemInterface.Command.ShowFileImageBackground;
+SystemInterface.CommandIdMap["216"] = SystemInterface.Command.ShowIconLabelWindow;
+SystemInterface.CommandIdMap["81"] = SystemInterface.Command.ShowResourceImageBackground;
+SystemInterface.CommandIdMap["34"] = SystemInterface.Command.ShowWebUrl;
+SystemInterface.CommandIdMap["43"] = SystemInterface.Command.ShutdownAgent;
+SystemInterface.CommandIdMap["47"] = SystemInterface.Command.StartServers;
+SystemInterface.CommandIdMap["72"] = SystemInterface.Command.StopCapture;
+SystemInterface.CommandIdMap["46"] = SystemInterface.Command.StopServers;
+SystemInterface.CommandIdMap["104"] = SystemInterface.Command.StreamCacheDisplayIntentState;
+SystemInterface.CommandIdMap["22"] = SystemInterface.Command.StreamItem;
+SystemInterface.CommandIdMap["10"] = SystemInterface.Command.StreamServerStatus;
+SystemInterface.CommandIdMap["26"] = SystemInterface.Command.TaskItem;
+SystemInterface.CommandIdMap["71"] = SystemInterface.Command.TimelapseCaptureIntentState;
+SystemInterface.CommandIdMap["42"] = SystemInterface.Command.UpdateAgentConfiguration;
+SystemInterface.CommandIdMap["39"] = SystemInterface.Command.UpdateIntentState;
+SystemInterface.CommandIdMap["82"] = SystemInterface.Command.WatchStatus;
+SystemInterface.CommandIdMap["7"] = SystemInterface.Command.WatchTasks;
+SystemInterface.CommandIdMap["49"] = SystemInterface.Command.WebDisplayIntentState;
 SystemInterface.Type = { };
+SystemInterface.Type.AddMediaTag = [{"name":"mediaId","type":"string","flags":35},{"name":"tag","type":"string","flags":3}];
 SystemInterface.Type.AgentConfiguration = [{"name":"isEnabled","type":"boolean","flags":0},{"name":"displayName","type":"string","flags":3},{"name":"mediaServerConfiguration","type":"MediaServerConfiguration","flags":0},{"name":"streamServerConfiguration","type":"StreamServerConfiguration","flags":0},{"name":"monitorServerConfiguration","type":"MonitorServerConfiguration","flags":0},{"name":"cameraServerConfiguration","type":"CameraServerConfiguration","flags":0}];
 SystemInterface.Type.AgentContact = [{"name":"id","type":"string","flags":35},{"name":"urlHostname","type":"string","flags":5},{"name":"tcpPort1","type":"number","flags":129,"rangeMin":0,"rangeMax":65535},{"name":"tcpPort2","type":"number","flags":129,"rangeMin":0,"rangeMax":65535},{"name":"udpPort","type":"number","flags":129,"rangeMin":0,"rangeMax":65535},{"name":"version","type":"string","flags":3},{"name":"nodeVersion","type":"string","flags":0,"defaultValue":""}];
 SystemInterface.Type.AgentHost = [{"name":"hostname","type":"string","flags":7},{"name":"authorizePath","type":"string","flags":0},{"name":"authorizeSecret","type":"string","flags":0},{"name":"authorizeToken","type":"string","flags":0}];
@@ -223,23 +330,26 @@ SystemInterface.Type.ApplicationNews = [{"name":"items","type":"array","containe
 SystemInterface.Type.ApplicationNewsItem = [{"name":"message","type":"string","flags":3},{"name":"iconType","type":"string","flags":0},{"name":"actionText","type":"string","flags":0},{"name":"actionType","type":"string","flags":0},{"name":"actionTarget","type":"string","flags":0}];
 SystemInterface.Type.Authorize = [{"name":"token","type":"string","flags":3}];
 SystemInterface.Type.AuthorizeResult = [{"name":"token","type":"string","flags":3}];
-SystemInterface.Type.CameraDisplayIntentState = [{"name":"cameras","type":"array","containerType":"AgentHost","flags":1},{"name":"cameraChoices","type":"array","containerType":"number","flags":3},{"name":"isShuffle","type":"boolean","flags":1},{"name":"minItemDisplayDuration","type":"number","flags":17,"defaultValue":300},{"name":"maxItemDisplayDuration","type":"number","flags":17,"defaultValue":900}];
+SystemInterface.Type.CameraImageDisplayIntentState = [{"name":"host","type":"AgentHost","flags":1},{"name":"sensor","type":"number","flags":17}];
+SystemInterface.Type.CameraSensor = [{"name":"isCapturing","type":"boolean","flags":1},{"name":"videoMonitor","type":"string","flags":1},{"name":"capturePeriod","type":"number","flags":17,"defaultValue":0},{"name":"imageProfile","type":"number","flags":17,"defaultValue":0},{"name":"flip","type":"number","flags":17,"defaultValue":0},{"name":"minCaptureTime","type":"number","flags":17,"defaultValue":0},{"name":"lastCaptureTime","type":"number","flags":17,"defaultValue":0},{"name":"lastCaptureWidth","type":"number","flags":17,"defaultValue":0},{"name":"lastCaptureHeight","type":"number","flags":17,"defaultValue":0}];
 SystemInterface.Type.CameraServerConfiguration = [];
-SystemInterface.Type.CameraServerStatus = [{"name":"isReady","type":"boolean","flags":1},{"name":"freeStorage","type":"number","flags":17},{"name":"totalStorage","type":"number","flags":17},{"name":"captureImagePath","type":"string","flags":65,"defaultValue":""},{"name":"isCapturing","type":"boolean","flags":1},{"name":"videoMonitor","type":"string","flags":2},{"name":"capturePeriod","type":"number","flags":17,"defaultValue":0},{"name":"imageProfile","type":"number","flags":17,"defaultValue":0},{"name":"flip","type":"number","flags":17,"defaultValue":0},{"name":"minCaptureTime","type":"number","flags":17,"defaultValue":0},{"name":"lastCaptureTime","type":"number","flags":17,"defaultValue":0},{"name":"lastCaptureWidth","type":"number","flags":17,"defaultValue":0},{"name":"lastCaptureHeight","type":"number","flags":17,"defaultValue":0}];
+SystemInterface.Type.CameraServerStatus = [{"name":"isReady","type":"boolean","flags":1},{"name":"freeStorage","type":"number","flags":17},{"name":"totalStorage","type":"number","flags":17},{"name":"captureImagePath","type":"string","flags":65,"defaultValue":""},{"name":"captureVideoPath","type":"string","flags":64},{"name":"sensors","type":"array","containerType":"CameraSensor","flags":1}];
+SystemInterface.Type.CameraStreamDisplayIntentState = [{"name":"host","type":"AgentHost","flags":1},{"name":"sensor","type":"number","flags":17},{"name":"streamProfile","type":"number","flags":17,"defaultValue":0},{"name":"flip","type":"number","flags":17,"defaultValue":0}];
 SystemInterface.Type.CancelTask = [{"name":"taskId","type":"string","flags":35}];
 SystemInterface.Type.CommandResult = [{"name":"success","type":"boolean","flags":1},{"name":"error","type":"string","flags":0},{"name":"itemId","type":"string","flags":32},{"name":"item","type":"object","flags":256},{"name":"taskId","type":"string","flags":32},{"name":"stringResult","type":"string","flags":0}];
-SystemInterface.Type.ConfigureCamera = [{"name":"isCaptureEnabled","type":"boolean","flags":1},{"name":"capturePeriod","type":"number","flags":17,"defaultValue":900},{"name":"imageProfile","type":"number","flags":17,"defaultValue":0},{"name":"streamProfile","type":"number","flags":17,"defaultValue":0},{"name":"flip","type":"number","flags":17,"defaultValue":0}];
+SystemInterface.Type.ConfigureCamera = [{"name":"sensor","type":"number","flags":17},{"name":"isCaptureEnabled","type":"boolean","flags":1},{"name":"capturePeriod","type":"number","flags":17,"defaultValue":900},{"name":"imageProfile","type":"number","flags":17,"defaultValue":0},{"name":"flip","type":"number","flags":17,"defaultValue":0}];
 SystemInterface.Type.ConfigureMediaStream = [{"name":"mediaId","type":"string","flags":35},{"name":"mediaServerAgentId","type":"string","flags":34},{"name":"mediaUrl","type":"string","flags":65,"defaultValue":""},{"name":"streamName","type":"string","flags":1},{"name":"mediaWidth","type":"number","flags":8},{"name":"mediaHeight","type":"number","flags":8},{"name":"profile","type":"number","flags":17,"defaultValue":0}];
 SystemInterface.Type.CreateCacheStream = [{"name":"streamUrl","type":"string","flags":67},{"name":"thumbnailUrl","type":"string","flags":67},{"name":"streamId","type":"string","flags":35},{"name":"streamName","type":"string","flags":3},{"name":"duration","type":"number","flags":17},{"name":"width","type":"number","flags":17},{"name":"height","type":"number","flags":17},{"name":"bitrate","type":"number","flags":17},{"name":"frameRate","type":"number","flags":17}];
-SystemInterface.Type.CreateCameraDisplayIntent = [{"name":"displayName","type":"string","flags":3},{"name":"cameras","type":"array","containerType":"AgentHost","flags":1},{"name":"isShuffle","type":"boolean","flags":1},{"name":"minItemDisplayDuration","type":"number","flags":9,"defaultValue":300},{"name":"maxItemDisplayDuration","type":"number","flags":9,"defaultValue":900}];
+SystemInterface.Type.CreateCameraImageDisplayIntent = [{"name":"displayName","type":"string","flags":3},{"name":"host","type":"AgentHost","flags":1},{"name":"sensor","type":"number","flags":17}];
+SystemInterface.Type.CreateCameraStreamDisplayIntent = [{"name":"displayName","type":"string","flags":3},{"name":"host","type":"AgentHost","flags":1},{"name":"sensor","type":"number","flags":17},{"name":"streamProfile","type":"number","flags":17,"defaultValue":0},{"name":"flip","type":"number","flags":17,"defaultValue":0}];
 SystemInterface.Type.CreateMediaDisplayIntent = [{"name":"displayName","type":"string","flags":3},{"name":"items","type":"array","containerType":"MediaDisplayItem","flags":1},{"name":"isShuffle","type":"boolean","flags":1},{"name":"minStartPositionDelta","type":"number","flags":129,"rangeMin":0,"rangeMax":100,"defaultValue":0},{"name":"maxStartPositionDelta","type":"number","flags":129,"rangeMin":0,"rangeMax":100,"defaultValue":0},{"name":"minItemDisplayDuration","type":"number","flags":17,"defaultValue":300},{"name":"maxItemDisplayDuration","type":"number","flags":17,"defaultValue":900}];
 SystemInterface.Type.CreateMediaStream = [{"name":"name","type":"string","flags":1},{"name":"mediaServerAgentId","type":"string","flags":34},{"name":"mediaId","type":"string","flags":35},{"name":"mediaUrl","type":"string","flags":65,"defaultValue":""},{"name":"width","type":"number","flags":8},{"name":"height","type":"number","flags":8},{"name":"profile","type":"number","flags":17,"defaultValue":0}];
 SystemInterface.Type.CreateMonitorProgram = [{"name":"displayName","type":"string","flags":3},{"name":"directives","type":"array","containerType":"MonitorProgramDirective","flags":1}];
 SystemInterface.Type.CreateStreamCacheDisplayIntent = [{"name":"displayName","type":"string","flags":3},{"name":"isShuffle","type":"boolean","flags":1},{"name":"minStartPositionDelta","type":"number","flags":129,"rangeMin":0,"rangeMax":100,"defaultValue":0},{"name":"maxStartPositionDelta","type":"number","flags":129,"rangeMin":0,"rangeMax":100,"defaultValue":0},{"name":"minItemDisplayDuration","type":"number","flags":17,"defaultValue":300},{"name":"maxItemDisplayDuration","type":"number","flags":17,"defaultValue":900}];
-SystemInterface.Type.CreateTimelapseCaptureIntent = [{"name":"capturePeriod","type":"number","flags":17,"defaultValue":900}];
+SystemInterface.Type.CreateTimelapseCaptureIntent = [{"name":"sensor","type":"number","flags":17},{"name":"capturePeriod","type":"number","flags":17,"defaultValue":900}];
 SystemInterface.Type.CreateWebDisplayIntent = [{"name":"displayName","type":"string","flags":3},{"name":"urls","type":"array","containerType":"string","flags":3},{"name":"isShuffle","type":"boolean","flags":1},{"name":"minItemDisplayDuration","type":"number","flags":9,"defaultValue":300},{"name":"maxItemDisplayDuration","type":"number","flags":9,"defaultValue":900}];
 SystemInterface.Type.EmptyObject = [];
-SystemInterface.Type.FindCaptureImages = [{"name":"minTime","type":"number","flags":17,"defaultValue":0},{"name":"maxTime","type":"number","flags":17,"defaultValue":0},{"name":"maxResults","type":"number","flags":17,"defaultValue":0},{"name":"isDescending","type":"boolean","flags":1,"defaultValue":false}];
+SystemInterface.Type.FindCaptureImages = [{"name":"sensor","type":"number","flags":17},{"name":"minTime","type":"number","flags":17,"defaultValue":0},{"name":"maxTime","type":"number","flags":17,"defaultValue":0},{"name":"maxResults","type":"number","flags":17,"defaultValue":0},{"name":"isDescending","type":"boolean","flags":1,"defaultValue":false}];
 SystemInterface.Type.FindCaptureImagesResult = [{"name":"captureTimes","type":"array","containerType":"number","flags":17}];
 SystemInterface.Type.FindMediaItems = [{"name":"searchKey","type":"string","flags":1,"defaultValue":"*"},{"name":"resultOffset","type":"number","flags":17,"defaultValue":0},{"name":"maxResults","type":"number","flags":17,"defaultValue":0},{"name":"sortOrder","type":"number","flags":17,"defaultValue":0}];
 SystemInterface.Type.FindMediaItemsResult = [{"name":"searchKey","type":"string","flags":1},{"name":"setSize","type":"number","flags":17,"defaultValue":0},{"name":"resultOffset","type":"number","flags":17,"defaultValue":0}];
@@ -247,9 +357,10 @@ SystemInterface.Type.FindMediaStreams = [{"name":"sourceIds","type":"array","con
 SystemInterface.Type.FindMediaStreamsResult = [{"name":"mediaId","type":"string","flags":35},{"name":"streams","type":"array","containerType":"object","flags":257}];
 SystemInterface.Type.FindStreamItems = [{"name":"searchKey","type":"string","flags":1,"defaultValue":"*"},{"name":"resultOffset","type":"number","flags":17,"defaultValue":0},{"name":"maxResults","type":"number","flags":17,"defaultValue":0},{"name":"sortOrder","type":"number","flags":17,"defaultValue":0}];
 SystemInterface.Type.FindStreamItemsResult = [{"name":"searchKey","type":"string","flags":1},{"name":"setSize","type":"number","flags":17,"defaultValue":0},{"name":"resultOffset","type":"number","flags":17,"defaultValue":0},{"name":"streams","type":"array","containerType":"StreamSummary","flags":0}];
-SystemInterface.Type.GetCameraStream = [{"name":"monitorName","type":"string","flags":1,"defaultValue":""}];
+SystemInterface.Type.GetCameraStream = [{"name":"sensor","type":"number","flags":17},{"name":"monitorName","type":"string","flags":1,"defaultValue":""},{"name":"streamProfile","type":"number","flags":17,"defaultValue":0},{"name":"flip","type":"number","flags":17,"defaultValue":0}];
 SystemInterface.Type.GetCameraStreamResult = [{"name":"streamUrl","type":"string","flags":67}];
-SystemInterface.Type.GetCaptureImage = [{"name":"imageTime","type":"number","flags":17,"defaultValue":0}];
+SystemInterface.Type.GetCaptureImage = [{"name":"sensor","type":"number","flags":17},{"name":"imageTime","type":"number","flags":17,"defaultValue":0}];
+SystemInterface.Type.GetCaptureVideo = [{"name":"sensor","type":"number","flags":17},{"name":"minTime","type":"number","flags":17,"defaultValue":0},{"name":"maxTime","type":"number","flags":17,"defaultValue":0},{"name":"isDescending","type":"boolean","flags":1,"defaultValue":false}];
 SystemInterface.Type.GetDashMpd = [{"name":"streamId","type":"string","flags":35}];
 SystemInterface.Type.GetDashSegment = [{"name":"streamId","type":"string","flags":35},{"name":"representationIndex","type":"number","flags":17},{"name":"segmentIndex","type":"number","flags":17}];
 SystemInterface.Type.GetHlsManifest = [{"name":"streamId","type":"string","flags":35},{"name":"startPosition","type":"number","flags":17,"defaultValue":0},{"name":"minStartPositionDelta","type":"number","flags":128,"rangeMin":0,"rangeMax":100},{"name":"maxStartPositionDelta","type":"number","flags":128,"rangeMin":0,"rangeMax":100}];
@@ -260,7 +371,7 @@ SystemInterface.Type.GetThumbnailImage = [{"name":"id","type":"string","flags":3
 SystemInterface.Type.IntentState = [{"name":"id","type":"string","flags":35},{"name":"name","type":"string","flags":3},{"name":"groupName","type":"string","flags":1,"defaultValue":""},{"name":"displayName","type":"string","flags":1,"defaultValue":""},{"name":"isActive","type":"boolean","flags":1},{"name":"conditions","type":"array","containerType":"object","flags":0},{"name":"state","type":"object","flags":1}];
 SystemInterface.Type.MediaDisplayIntentState = [{"name":"items","type":"array","containerType":"MediaDisplayItem","flags":3},{"name":"itemChoices","type":"array","containerType":"number","flags":3},{"name":"isShuffle","type":"boolean","flags":1},{"name":"minStartPositionDelta","type":"number","flags":129,"rangeMin":0,"rangeMax":100,"defaultValue":0},{"name":"maxStartPositionDelta","type":"number","flags":129,"rangeMin":0,"rangeMax":100,"defaultValue":0},{"name":"minItemDisplayDuration","type":"number","flags":17,"defaultValue":300},{"name":"maxItemDisplayDuration","type":"number","flags":17,"defaultValue":900}];
 SystemInterface.Type.MediaDisplayItem = [{"name":"mediaName","type":"string","flags":1,"defaultValue":""},{"name":"streamUrl","type":"string","flags":65,"defaultValue":""},{"name":"streamId","type":"string","flags":33,"defaultValue":""},{"name":"startPosition","type":"number","flags":16},{"name":"thumbnailUrl","type":"string","flags":66},{"name":"thumbnailIndex","type":"number","flags":16}];
-SystemInterface.Type.MediaItem = [{"name":"id","type":"string","flags":35},{"name":"name","type":"string","flags":3},{"name":"mediaPath","type":"string","flags":1},{"name":"mtime","type":"number","flags":17,"defaultValue":0},{"name":"duration","type":"number","flags":17},{"name":"frameRate","type":"number","flags":17},{"name":"width","type":"number","flags":17},{"name":"height","type":"number","flags":17},{"name":"size","type":"number","flags":17},{"name":"bitrate","type":"number","flags":17},{"name":"isCreateStreamAvailable","type":"boolean","flags":1,"defaultValue":true}];
+SystemInterface.Type.MediaItem = [{"name":"id","type":"string","flags":35},{"name":"name","type":"string","flags":3},{"name":"mediaPath","type":"string","flags":1},{"name":"mtime","type":"number","flags":17,"defaultValue":0},{"name":"duration","type":"number","flags":17},{"name":"frameRate","type":"number","flags":17},{"name":"width","type":"number","flags":17},{"name":"height","type":"number","flags":17},{"name":"size","type":"number","flags":17},{"name":"bitrate","type":"number","flags":17},{"name":"isCreateStreamAvailable","type":"boolean","flags":1,"defaultValue":true},{"name":"tags","type":"array","containerType":"string","flags":2},{"name":"sortKey","type":"string","flags":0}];
 SystemInterface.Type.MediaServerConfiguration = [{"name":"mediaPath","type":"string","flags":2},{"name":"dataPath","type":"string","flags":2},{"name":"scanPeriod","type":"number","flags":16}];
 SystemInterface.Type.MediaServerStatus = [{"name":"isReady","type":"boolean","flags":1},{"name":"mediaCount","type":"number","flags":17},{"name":"mediaPath","type":"string","flags":65},{"name":"thumbnailPath","type":"string","flags":65,"defaultValue":""},{"name":"thumbnailCount","type":"number","flags":17,"defaultValue":0}];
 SystemInterface.Type.MonitorProgramCondition = [{"name":"name","type":"string","flags":3},{"name":"priority","type":"number","flags":9,"defaultValue":1},{"name":"clockTime","type":"array","containerType":"MonitorProgramTimeCondition","flags":0},{"name":"activeTime","type":"number","flags":16},{"name":"idleTime","type":"number","flags":16}];
@@ -270,10 +381,11 @@ SystemInterface.Type.MonitorServerConfiguration = [];
 SystemInterface.Type.MonitorServerStatus = [{"name":"freeStorage","type":"number","flags":17},{"name":"totalStorage","type":"number","flags":17},{"name":"streamCount","type":"number","flags":17},{"name":"cacheMtime","type":"number","flags":17},{"name":"thumbnailPath","type":"string","flags":65,"defaultValue":""},{"name":"screenshotPath","type":"string","flags":65,"defaultValue":""},{"name":"screenshotTime","type":"number","flags":17,"defaultValue":0},{"name":"displayState","type":"number","flags":17,"defaultValue":0},{"name":"displayTarget","type":"string","flags":1,"defaultValue":""},{"name":"isPlayPaused","type":"boolean","flags":1},{"name":"isShowUrlAvailable","type":"boolean","flags":1},{"name":"intentName","type":"string","flags":1,"defaultValue":""}];
 SystemInterface.Type.PlayAnimation = [{"name":"commands","type":"array","containerType":"AnimationCommand","flags":1}];
 SystemInterface.Type.PlayCacheStream = [{"name":"streamId","type":"string","flags":35},{"name":"startPosition","type":"number","flags":16},{"name":"minStartPositionDelta","type":"number","flags":128,"rangeMin":0,"rangeMax":100},{"name":"maxStartPositionDelta","type":"number","flags":128,"rangeMin":0,"rangeMax":100}];
-SystemInterface.Type.PlayCameraStream = [{"name":"host","type":"AgentHost","flags":1}];
+SystemInterface.Type.PlayCameraStream = [{"name":"host","type":"AgentHost","flags":1},{"name":"sensor","type":"number","flags":17},{"name":"streamProfile","type":"number","flags":17,"defaultValue":0},{"name":"flip","type":"number","flags":17,"defaultValue":0}];
 SystemInterface.Type.PlayMedia = [{"name":"mediaName","type":"string","flags":1,"defaultValue":""},{"name":"streamUrl","type":"string","flags":66},{"name":"streamId","type":"string","flags":34},{"name":"startPosition","type":"number","flags":16},{"name":"minStartPositionDelta","type":"number","flags":128,"rangeMin":0,"rangeMax":100},{"name":"maxStartPositionDelta","type":"number","flags":128,"rangeMin":0,"rangeMax":100},{"name":"thumbnailUrl","type":"string","flags":66}];
 SystemInterface.Type.RemoveIntent = [{"name":"id","type":"string","flags":35}];
 SystemInterface.Type.RemoveMedia = [{"name":"id","type":"string","flags":35}];
+SystemInterface.Type.RemoveMediaTag = [{"name":"mediaId","type":"string","flags":35},{"name":"tag","type":"string","flags":3}];
 SystemInterface.Type.RemoveStream = [{"name":"id","type":"string","flags":35}];
 SystemInterface.Type.RemoveWindow = [{"name":"windowId","type":"string","flags":3}];
 SystemInterface.Type.ReportContact = [{"name":"destination","type":"string","flags":65}];
@@ -282,7 +394,7 @@ SystemInterface.Type.ServerError = [{"name":"error","type":"string","flags":0,"d
 SystemInterface.Type.SetAdminSecret = [{"name":"secret","type":"string","flags":1}];
 SystemInterface.Type.SetIntentActive = [{"name":"id","type":"string","flags":35},{"name":"isActive","type":"boolean","flags":1}];
 SystemInterface.Type.ShowAgentStatus = [{"name":"hostname","type":"string","flags":7}];
-SystemInterface.Type.ShowCameraImage = [{"name":"host","type":"AgentHost","flags":1},{"name":"imageTime","type":"number","flags":17,"defaultValue":0}];
+SystemInterface.Type.ShowCameraImage = [{"name":"host","type":"AgentHost","flags":1},{"name":"sensor","type":"number","flags":17},{"name":"imageTime","type":"number","flags":17,"defaultValue":0},{"name":"displayTimestamp","type":"number","flags":16}];
 SystemInterface.Type.ShowColorFillBackground = [{"name":"fillColorR","type":"number","flags":129,"rangeMin":0,"rangeMax":255},{"name":"fillColorG","type":"number","flags":129,"rangeMin":0,"rangeMax":255},{"name":"fillColorB","type":"number","flags":129,"rangeMin":0,"rangeMax":255}];
 SystemInterface.Type.ShowCountdownWindow = [{"name":"windowId","type":"string","flags":1,"defaultValue":""},{"name":"icon","type":"number","flags":1,"defaultValue":0},{"name":"positionX","type":"number","flags":1},{"name":"positionY","type":"number","flags":1},{"name":"labelText","type":"string","flags":3},{"name":"countdownTime","type":"number","flags":1,"defaultValue":20000}];
 SystemInterface.Type.ShowDesktopCountdown = [{"name":"countdownTime","type":"number","flags":9,"defaultValue":20000}];
@@ -291,16 +403,17 @@ SystemInterface.Type.ShowIconLabelWindow = [{"name":"windowId","type":"string","
 SystemInterface.Type.ShowResourceImageBackground = [{"name":"imagePath","type":"string","flags":3}];
 SystemInterface.Type.ShowWebUrl = [{"name":"url","type":"string","flags":67}];
 SystemInterface.Type.StreamCacheDisplayIntentState = [{"name":"isShuffle","type":"boolean","flags":1},{"name":"minStartPositionDelta","type":"number","flags":129,"rangeMin":0,"rangeMax":100,"defaultValue":0},{"name":"maxStartPositionDelta","type":"number","flags":129,"rangeMin":0,"rangeMax":100,"defaultValue":0},{"name":"minItemDisplayDuration","type":"number","flags":17,"defaultValue":300},{"name":"maxItemDisplayDuration","type":"number","flags":17,"defaultValue":900}];
-SystemInterface.Type.StreamItem = [{"name":"id","type":"string","flags":35},{"name":"name","type":"string","flags":3},{"name":"sourceId","type":"string","flags":33,"defaultValue":""},{"name":"duration","type":"number","flags":17},{"name":"width","type":"number","flags":17},{"name":"height","type":"number","flags":17},{"name":"size","type":"number","flags":17},{"name":"bitrate","type":"number","flags":17},{"name":"frameRate","type":"number","flags":17},{"name":"profile","type":"number","flags":17,"defaultValue":0},{"name":"hlsTargetDuration","type":"number","flags":17},{"name":"segmentCount","type":"number","flags":17},{"name":"segmentFilenames","type":"array","containerType":"string","flags":1},{"name":"segmentLengths","type":"array","containerType":"number","flags":17},{"name":"segmentPositions","type":"array","containerType":"number","flags":17}];
+SystemInterface.Type.StreamItem = [{"name":"id","type":"string","flags":35},{"name":"name","type":"string","flags":3},{"name":"sourceId","type":"string","flags":33,"defaultValue":""},{"name":"duration","type":"number","flags":17},{"name":"width","type":"number","flags":17},{"name":"height","type":"number","flags":17},{"name":"size","type":"number","flags":17},{"name":"bitrate","type":"number","flags":17},{"name":"frameRate","type":"number","flags":17},{"name":"profile","type":"number","flags":17,"defaultValue":0},{"name":"hlsTargetDuration","type":"number","flags":17},{"name":"segmentCount","type":"number","flags":17},{"name":"segmentFilenames","type":"array","containerType":"string","flags":1},{"name":"segmentLengths","type":"array","containerType":"number","flags":17},{"name":"segmentPositions","type":"array","containerType":"number","flags":17},{"name":"tags","type":"array","containerType":"string","flags":2}];
 SystemInterface.Type.StreamServerConfiguration = [{"name":"dataPath","type":"string","flags":2}];
 SystemInterface.Type.StreamServerStatus = [{"name":"isReady","type":"boolean","flags":1},{"name":"streamCount","type":"number","flags":17},{"name":"freeStorage","type":"number","flags":17},{"name":"totalStorage","type":"number","flags":17},{"name":"hlsStreamPath","type":"string","flags":1},{"name":"thumbnailPath","type":"string","flags":1},{"name":"htmlPlayerPath","type":"string","flags":1},{"name":"htmlCatalogPath","type":"string","flags":1}];
 SystemInterface.Type.StreamSummary = [{"name":"id","type":"string","flags":35},{"name":"name","type":"string","flags":3},{"name":"duration","type":"number","flags":17},{"name":"width","type":"number","flags":17},{"name":"height","type":"number","flags":17},{"name":"size","type":"number","flags":17},{"name":"bitrate","type":"number","flags":17},{"name":"frameRate","type":"number","flags":17},{"name":"profile","type":"number","flags":17,"defaultValue":0},{"name":"segmentCount","type":"number","flags":17}];
 SystemInterface.Type.TaskItem = [{"name":"id","type":"string","flags":33},{"name":"name","type":"string","flags":3},{"name":"subtitle","type":"string","flags":1,"defaultValue":""},{"name":"isRunning","type":"boolean","flags":1},{"name":"percentComplete","type":"number","flags":129,"rangeMin":0,"rangeMax":100,"defaultValue":0},{"name":"createTime","type":"number","flags":9},{"name":"endTime","type":"number","flags":17}];
-SystemInterface.Type.TimelapseCaptureIntentState = [{"name":"capturePeriod","type":"number","flags":17,"defaultValue":900},{"name":"imageProfile","type":"number","flags":17,"defaultValue":0},{"name":"nextCaptureTime","type":"number","flags":17,"defaultValue":0}];
+SystemInterface.Type.TimelapseCaptureIntentState = [{"name":"sensor","type":"number","flags":17},{"name":"capturePeriod","type":"number","flags":17,"defaultValue":900},{"name":"nextCaptureTime","type":"number","flags":17,"defaultValue":0}];
 SystemInterface.Type.UpdateAgentConfiguration = [{"name":"agentConfiguration","type":"AgentConfiguration","flags":1}];
 SystemInterface.Type.UpdateIntentState = [{"name":"id","type":"string","flags":35},{"name":"state","type":"object","flags":1},{"name":"isReplace","type":"boolean","flags":1,"defaultValue":false}];
 SystemInterface.Type.WatchTasks = [{"name":"taskIds","type":"array","containerType":"string","flags":35}];
 SystemInterface.Type.WebDisplayIntentState = [{"name":"urls","type":"array","containerType":"string","flags":3},{"name":"urlChoices","type":"array","containerType":"number","flags":3},{"name":"isShuffle","type":"boolean","flags":1},{"name":"minItemDisplayDuration","type":"number","flags":9,"defaultValue":300},{"name":"maxItemDisplayDuration","type":"number","flags":9,"defaultValue":900}];
+SystemInterface.Type.AddMediaTag.updateHash = function (p, f) {f (p.mediaId);f (p.tag);};
 SystemInterface.Type.AgentConfiguration.updateHash = function (p, f) {if ((typeof p.cameraServerConfiguration == "object") && (p.cameraServerConfiguration != null)) {SystemInterface.Type.CameraServerConfiguration.updateHash(p.cameraServerConfiguration, f);}f (p.displayName);f (p.isEnabled ? "true" : "false");if ((typeof p.mediaServerConfiguration == "object") && (p.mediaServerConfiguration != null)) {SystemInterface.Type.MediaServerConfiguration.updateHash(p.mediaServerConfiguration, f);}if ((typeof p.monitorServerConfiguration == "object") && (p.monitorServerConfiguration != null)) {SystemInterface.Type.MonitorServerConfiguration.updateHash(p.monitorServerConfiguration, f);}if ((typeof p.streamServerConfiguration == "object") && (p.streamServerConfiguration != null)) {SystemInterface.Type.StreamServerConfiguration.updateHash(p.streamServerConfiguration, f);}};
 SystemInterface.Type.AgentContact.updateHash = function (p, f) {f (p.id);if (typeof p.nodeVersion == "string") {f (p.nodeVersion);}f ("" + Math.trunc (p.tcpPort1));f ("" + Math.trunc (p.tcpPort2));f ("" + Math.trunc (p.udpPort));f (p.urlHostname);f (p.version);};
 SystemInterface.Type.AgentHost.updateHash = function (p, f) {if (typeof p.authorizePath == "string") {f (p.authorizePath);}if (typeof p.authorizeSecret == "string") {f (p.authorizeSecret);}if (typeof p.authorizeToken == "string") {f (p.authorizeToken);}f (p.hostname);};
@@ -310,23 +423,26 @@ SystemInterface.Type.ApplicationNews.updateHash = function (p, f) {var i;for (i 
 SystemInterface.Type.ApplicationNewsItem.updateHash = function (p, f) {if (typeof p.actionTarget == "string") {f (p.actionTarget);}if (typeof p.actionText == "string") {f (p.actionText);}if (typeof p.actionType == "string") {f (p.actionType);}if (typeof p.iconType == "string") {f (p.iconType);}f (p.message);};
 SystemInterface.Type.Authorize.updateHash = function (p, f) {f (p.token);};
 SystemInterface.Type.AuthorizeResult.updateHash = function (p, f) {f (p.token);};
-SystemInterface.Type.CameraDisplayIntentState.updateHash = function (p, f) {var i;for (i = 0; i < p.cameraChoices.length; ++i) {f ("" + Math.trunc (p.cameraChoices[i]));}for (i = 0; i < p.cameras.length; ++i) {SystemInterface.Type.AgentHost.updateHash(p.cameras[i], f);}f (p.isShuffle ? "true" : "false");f ("" + Math.trunc (p.maxItemDisplayDuration));f ("" + Math.trunc (p.minItemDisplayDuration));};
+SystemInterface.Type.CameraImageDisplayIntentState.updateHash = function (p, f) {SystemInterface.Type.AgentHost.updateHash(p.host, f);f ("" + Math.trunc (p.sensor));};
+SystemInterface.Type.CameraSensor.updateHash = function (p, f) {f ("" + Math.trunc (p.capturePeriod));f ("" + Math.trunc (p.flip));f ("" + Math.trunc (p.imageProfile));f (p.isCapturing ? "true" : "false");f ("" + Math.trunc (p.lastCaptureHeight));f ("" + Math.trunc (p.lastCaptureTime));f ("" + Math.trunc (p.lastCaptureWidth));f ("" + Math.trunc (p.minCaptureTime));f (p.videoMonitor);};
 SystemInterface.Type.CameraServerConfiguration.updateHash = function (p, f) {};
-SystemInterface.Type.CameraServerStatus.updateHash = function (p, f) {f (p.captureImagePath);f ("" + Math.trunc (p.capturePeriod));f ("" + Math.trunc (p.flip));f ("" + Math.trunc (p.freeStorage));f ("" + Math.trunc (p.imageProfile));f (p.isCapturing ? "true" : "false");f (p.isReady ? "true" : "false");f ("" + Math.trunc (p.lastCaptureHeight));f ("" + Math.trunc (p.lastCaptureTime));f ("" + Math.trunc (p.lastCaptureWidth));f ("" + Math.trunc (p.minCaptureTime));f ("" + Math.trunc (p.totalStorage));if (typeof p.videoMonitor == "string") {f (p.videoMonitor);}};
+SystemInterface.Type.CameraServerStatus.updateHash = function (p, f) {var i;f (p.captureImagePath);if (typeof p.captureVideoPath == "string") {f (p.captureVideoPath);}f ("" + Math.trunc (p.freeStorage));f (p.isReady ? "true" : "false");for (i = 0; i < p.sensors.length; ++i) {SystemInterface.Type.CameraSensor.updateHash(p.sensors[i], f);}f ("" + Math.trunc (p.totalStorage));};
+SystemInterface.Type.CameraStreamDisplayIntentState.updateHash = function (p, f) {f ("" + Math.trunc (p.flip));SystemInterface.Type.AgentHost.updateHash(p.host, f);f ("" + Math.trunc (p.sensor));f ("" + Math.trunc (p.streamProfile));};
 SystemInterface.Type.CancelTask.updateHash = function (p, f) {f (p.taskId);};
 SystemInterface.Type.CommandResult.updateHash = function (p, f) {if (typeof p.error == "string") {f (p.error);}if (typeof p.itemId == "string") {f (p.itemId);}if (typeof p.stringResult == "string") {f (p.stringResult);}f (p.success ? "true" : "false");if (typeof p.taskId == "string") {f (p.taskId);}};
-SystemInterface.Type.ConfigureCamera.updateHash = function (p, f) {f ("" + Math.trunc (p.capturePeriod));f ("" + Math.trunc (p.flip));f ("" + Math.trunc (p.imageProfile));f (p.isCaptureEnabled ? "true" : "false");f ("" + Math.trunc (p.streamProfile));};
+SystemInterface.Type.ConfigureCamera.updateHash = function (p, f) {f ("" + Math.trunc (p.capturePeriod));f ("" + Math.trunc (p.flip));f ("" + Math.trunc (p.imageProfile));f (p.isCaptureEnabled ? "true" : "false");f ("" + Math.trunc (p.sensor));};
 SystemInterface.Type.ConfigureMediaStream.updateHash = function (p, f) {if (typeof p.mediaHeight == "number") {f ("" + Math.trunc (p.mediaHeight));}f (p.mediaId);if (typeof p.mediaServerAgentId == "string") {f (p.mediaServerAgentId);}f (p.mediaUrl);if (typeof p.mediaWidth == "number") {f ("" + Math.trunc (p.mediaWidth));}f ("" + Math.trunc (p.profile));f (p.streamName);};
 SystemInterface.Type.CreateCacheStream.updateHash = function (p, f) {f ("" + Math.trunc (p.bitrate));f ("" + Math.trunc (p.duration));f ("" + Math.trunc (p.frameRate));f ("" + Math.trunc (p.height));f (p.streamId);f (p.streamName);f (p.streamUrl);f (p.thumbnailUrl);f ("" + Math.trunc (p.width));};
-SystemInterface.Type.CreateCameraDisplayIntent.updateHash = function (p, f) {var i;for (i = 0; i < p.cameras.length; ++i) {SystemInterface.Type.AgentHost.updateHash(p.cameras[i], f);}f (p.displayName);f (p.isShuffle ? "true" : "false");f ("" + Math.trunc (p.maxItemDisplayDuration));f ("" + Math.trunc (p.minItemDisplayDuration));};
+SystemInterface.Type.CreateCameraImageDisplayIntent.updateHash = function (p, f) {f (p.displayName);SystemInterface.Type.AgentHost.updateHash(p.host, f);f ("" + Math.trunc (p.sensor));};
+SystemInterface.Type.CreateCameraStreamDisplayIntent.updateHash = function (p, f) {f (p.displayName);f ("" + Math.trunc (p.flip));SystemInterface.Type.AgentHost.updateHash(p.host, f);f ("" + Math.trunc (p.sensor));f ("" + Math.trunc (p.streamProfile));};
 SystemInterface.Type.CreateMediaDisplayIntent.updateHash = function (p, f) {var i;f (p.displayName);f (p.isShuffle ? "true" : "false");for (i = 0; i < p.items.length; ++i) {SystemInterface.Type.MediaDisplayItem.updateHash(p.items[i], f);}f ("" + Math.trunc (p.maxItemDisplayDuration));f ("" + Math.trunc (p.maxStartPositionDelta));f ("" + Math.trunc (p.minItemDisplayDuration));f ("" + Math.trunc (p.minStartPositionDelta));};
 SystemInterface.Type.CreateMediaStream.updateHash = function (p, f) {if (typeof p.height == "number") {f ("" + Math.trunc (p.height));}f (p.mediaId);if (typeof p.mediaServerAgentId == "string") {f (p.mediaServerAgentId);}f (p.mediaUrl);f (p.name);f ("" + Math.trunc (p.profile));if (typeof p.width == "number") {f ("" + Math.trunc (p.width));}};
 SystemInterface.Type.CreateMonitorProgram.updateHash = function (p, f) {var i;for (i = 0; i < p.directives.length; ++i) {SystemInterface.Type.MonitorProgramDirective.updateHash(p.directives[i], f);}f (p.displayName);};
 SystemInterface.Type.CreateStreamCacheDisplayIntent.updateHash = function (p, f) {f (p.displayName);f (p.isShuffle ? "true" : "false");f ("" + Math.trunc (p.maxItemDisplayDuration));f ("" + Math.trunc (p.maxStartPositionDelta));f ("" + Math.trunc (p.minItemDisplayDuration));f ("" + Math.trunc (p.minStartPositionDelta));};
-SystemInterface.Type.CreateTimelapseCaptureIntent.updateHash = function (p, f) {f ("" + Math.trunc (p.capturePeriod));};
+SystemInterface.Type.CreateTimelapseCaptureIntent.updateHash = function (p, f) {f ("" + Math.trunc (p.capturePeriod));f ("" + Math.trunc (p.sensor));};
 SystemInterface.Type.CreateWebDisplayIntent.updateHash = function (p, f) {var i;f (p.displayName);f (p.isShuffle ? "true" : "false");f ("" + Math.trunc (p.maxItemDisplayDuration));f ("" + Math.trunc (p.minItemDisplayDuration));for (i = 0; i < p.urls.length; ++i) {f (p.urls[i]);}};
 SystemInterface.Type.EmptyObject.updateHash = function (p, f) {};
-SystemInterface.Type.FindCaptureImages.updateHash = function (p, f) {f (p.isDescending ? "true" : "false");f ("" + Math.trunc (p.maxResults));f ("" + Math.trunc (p.maxTime));f ("" + Math.trunc (p.minTime));};
+SystemInterface.Type.FindCaptureImages.updateHash = function (p, f) {f (p.isDescending ? "true" : "false");f ("" + Math.trunc (p.maxResults));f ("" + Math.trunc (p.maxTime));f ("" + Math.trunc (p.minTime));f ("" + Math.trunc (p.sensor));};
 SystemInterface.Type.FindCaptureImagesResult.updateHash = function (p, f) {var i;for (i = 0; i < p.captureTimes.length; ++i) {f ("" + Math.trunc (p.captureTimes[i]));}};
 SystemInterface.Type.FindMediaItems.updateHash = function (p, f) {f ("" + Math.trunc (p.maxResults));f ("" + Math.trunc (p.resultOffset));f (p.searchKey);f ("" + Math.trunc (p.sortOrder));};
 SystemInterface.Type.FindMediaItemsResult.updateHash = function (p, f) {f ("" + Math.trunc (p.resultOffset));f (p.searchKey);f ("" + Math.trunc (p.setSize));};
@@ -334,9 +450,10 @@ SystemInterface.Type.FindMediaStreams.updateHash = function (p, f) {var i;for (i
 SystemInterface.Type.FindMediaStreamsResult.updateHash = function (p, f) {var i;f (p.mediaId);for (i = 0; i < p.streams.length; ++i) {}};
 SystemInterface.Type.FindStreamItems.updateHash = function (p, f) {f ("" + Math.trunc (p.maxResults));f ("" + Math.trunc (p.resultOffset));f (p.searchKey);f ("" + Math.trunc (p.sortOrder));};
 SystemInterface.Type.FindStreamItemsResult.updateHash = function (p, f) {var i;f ("" + Math.trunc (p.resultOffset));f (p.searchKey);f ("" + Math.trunc (p.setSize));if ((typeof p.streams == "object") && (typeof p.streams.length == "number") && (p.streams != null)) {for (i = 0; i < p.streams.length; ++i) {SystemInterface.Type.StreamSummary.updateHash(p.streams[i], f);}}};
-SystemInterface.Type.GetCameraStream.updateHash = function (p, f) {f (p.monitorName);};
+SystemInterface.Type.GetCameraStream.updateHash = function (p, f) {f ("" + Math.trunc (p.flip));f (p.monitorName);f ("" + Math.trunc (p.sensor));f ("" + Math.trunc (p.streamProfile));};
 SystemInterface.Type.GetCameraStreamResult.updateHash = function (p, f) {f (p.streamUrl);};
-SystemInterface.Type.GetCaptureImage.updateHash = function (p, f) {f ("" + Math.trunc (p.imageTime));};
+SystemInterface.Type.GetCaptureImage.updateHash = function (p, f) {f ("" + Math.trunc (p.imageTime));f ("" + Math.trunc (p.sensor));};
+SystemInterface.Type.GetCaptureVideo.updateHash = function (p, f) {f (p.isDescending ? "true" : "false");f ("" + Math.trunc (p.maxTime));f ("" + Math.trunc (p.minTime));f ("" + Math.trunc (p.sensor));};
 SystemInterface.Type.GetDashMpd.updateHash = function (p, f) {f (p.streamId);};
 SystemInterface.Type.GetDashSegment.updateHash = function (p, f) {f ("" + Math.trunc (p.representationIndex));f ("" + Math.trunc (p.segmentIndex));f (p.streamId);};
 SystemInterface.Type.GetHlsManifest.updateHash = function (p, f) {if (typeof p.maxStartPositionDelta == "number") {f ("" + Math.trunc (p.maxStartPositionDelta));}if (typeof p.minStartPositionDelta == "number") {f ("" + Math.trunc (p.minStartPositionDelta));}f ("" + Math.trunc (p.startPosition));f (p.streamId);};
@@ -347,7 +464,7 @@ SystemInterface.Type.GetThumbnailImage.updateHash = function (p, f) {f (p.id);f 
 SystemInterface.Type.IntentState.updateHash = function (p, f) {var i;if ((typeof p.conditions == "object") && (typeof p.conditions.length == "number") && (p.conditions != null)) {for (i = 0; i < p.conditions.length; ++i) {}}f (p.displayName);f (p.groupName);f (p.id);f (p.isActive ? "true" : "false");f (p.name);};
 SystemInterface.Type.MediaDisplayIntentState.updateHash = function (p, f) {var i;f (p.isShuffle ? "true" : "false");for (i = 0; i < p.itemChoices.length; ++i) {f ("" + Math.trunc (p.itemChoices[i]));}for (i = 0; i < p.items.length; ++i) {SystemInterface.Type.MediaDisplayItem.updateHash(p.items[i], f);}f ("" + Math.trunc (p.maxItemDisplayDuration));f ("" + Math.trunc (p.maxStartPositionDelta));f ("" + Math.trunc (p.minItemDisplayDuration));f ("" + Math.trunc (p.minStartPositionDelta));};
 SystemInterface.Type.MediaDisplayItem.updateHash = function (p, f) {f (p.mediaName);if (typeof p.startPosition == "number") {f ("" + Math.trunc (p.startPosition));}f (p.streamId);f (p.streamUrl);if (typeof p.thumbnailIndex == "number") {f ("" + Math.trunc (p.thumbnailIndex));}if (typeof p.thumbnailUrl == "string") {f (p.thumbnailUrl);}};
-SystemInterface.Type.MediaItem.updateHash = function (p, f) {f ("" + Math.trunc (p.bitrate));f ("" + Math.trunc (p.duration));f ("" + Math.trunc (p.frameRate));f ("" + Math.trunc (p.height));f (p.id);f (p.isCreateStreamAvailable ? "true" : "false");f (p.mediaPath);f ("" + Math.trunc (p.mtime));f (p.name);f ("" + Math.trunc (p.size));f ("" + Math.trunc (p.width));};
+SystemInterface.Type.MediaItem.updateHash = function (p, f) {var i;f ("" + Math.trunc (p.bitrate));f ("" + Math.trunc (p.duration));f ("" + Math.trunc (p.frameRate));f ("" + Math.trunc (p.height));f (p.id);f (p.isCreateStreamAvailable ? "true" : "false");f (p.mediaPath);f ("" + Math.trunc (p.mtime));f (p.name);f ("" + Math.trunc (p.size));if (typeof p.sortKey == "string") {f (p.sortKey);}if ((typeof p.tags == "object") && (typeof p.tags.length == "number") && (p.tags != null)) {for (i = 0; i < p.tags.length; ++i) {f (p.tags[i]);}}f ("" + Math.trunc (p.width));};
 SystemInterface.Type.MediaServerConfiguration.updateHash = function (p, f) {if (typeof p.dataPath == "string") {f (p.dataPath);}if (typeof p.mediaPath == "string") {f (p.mediaPath);}if (typeof p.scanPeriod == "number") {f ("" + Math.trunc (p.scanPeriod));}};
 SystemInterface.Type.MediaServerStatus.updateHash = function (p, f) {f (p.isReady ? "true" : "false");f ("" + Math.trunc (p.mediaCount));f (p.mediaPath);f ("" + Math.trunc (p.thumbnailCount));f (p.thumbnailPath);};
 SystemInterface.Type.MonitorProgramCondition.updateHash = function (p, f) {var i;if (typeof p.activeTime == "number") {f ("" + Math.trunc (p.activeTime));}if ((typeof p.clockTime == "object") && (typeof p.clockTime.length == "number") && (p.clockTime != null)) {for (i = 0; i < p.clockTime.length; ++i) {SystemInterface.Type.MonitorProgramTimeCondition.updateHash(p.clockTime[i], f);}}if (typeof p.idleTime == "number") {f ("" + Math.trunc (p.idleTime));}f (p.name);f ("" + Math.trunc (p.priority));};
@@ -357,10 +474,11 @@ SystemInterface.Type.MonitorServerConfiguration.updateHash = function (p, f) {};
 SystemInterface.Type.MonitorServerStatus.updateHash = function (p, f) {f ("" + Math.trunc (p.cacheMtime));f ("" + Math.trunc (p.displayState));f (p.displayTarget);f ("" + Math.trunc (p.freeStorage));f (p.intentName);f (p.isPlayPaused ? "true" : "false");f (p.isShowUrlAvailable ? "true" : "false");f (p.screenshotPath);f ("" + Math.trunc (p.screenshotTime));f ("" + Math.trunc (p.streamCount));f (p.thumbnailPath);f ("" + Math.trunc (p.totalStorage));};
 SystemInterface.Type.PlayAnimation.updateHash = function (p, f) {var i;for (i = 0; i < p.commands.length; ++i) {SystemInterface.Type.AnimationCommand.updateHash(p.commands[i], f);}};
 SystemInterface.Type.PlayCacheStream.updateHash = function (p, f) {if (typeof p.maxStartPositionDelta == "number") {f ("" + Math.trunc (p.maxStartPositionDelta));}if (typeof p.minStartPositionDelta == "number") {f ("" + Math.trunc (p.minStartPositionDelta));}if (typeof p.startPosition == "number") {f ("" + Math.trunc (p.startPosition));}f (p.streamId);};
-SystemInterface.Type.PlayCameraStream.updateHash = function (p, f) {SystemInterface.Type.AgentHost.updateHash(p.host, f);};
+SystemInterface.Type.PlayCameraStream.updateHash = function (p, f) {f ("" + Math.trunc (p.flip));SystemInterface.Type.AgentHost.updateHash(p.host, f);f ("" + Math.trunc (p.sensor));f ("" + Math.trunc (p.streamProfile));};
 SystemInterface.Type.PlayMedia.updateHash = function (p, f) {if (typeof p.maxStartPositionDelta == "number") {f ("" + Math.trunc (p.maxStartPositionDelta));}f (p.mediaName);if (typeof p.minStartPositionDelta == "number") {f ("" + Math.trunc (p.minStartPositionDelta));}if (typeof p.startPosition == "number") {f ("" + Math.trunc (p.startPosition));}if (typeof p.streamId == "string") {f (p.streamId);}if (typeof p.streamUrl == "string") {f (p.streamUrl);}if (typeof p.thumbnailUrl == "string") {f (p.thumbnailUrl);}};
 SystemInterface.Type.RemoveIntent.updateHash = function (p, f) {f (p.id);};
 SystemInterface.Type.RemoveMedia.updateHash = function (p, f) {f (p.id);};
+SystemInterface.Type.RemoveMediaTag.updateHash = function (p, f) {f (p.mediaId);f (p.tag);};
 SystemInterface.Type.RemoveStream.updateHash = function (p, f) {f (p.id);};
 SystemInterface.Type.RemoveWindow.updateHash = function (p, f) {f (p.windowId);};
 SystemInterface.Type.ReportContact.updateHash = function (p, f) {f (p.destination);};
@@ -369,7 +487,7 @@ SystemInterface.Type.ServerError.updateHash = function (p, f) {if (typeof p.erro
 SystemInterface.Type.SetAdminSecret.updateHash = function (p, f) {f (p.secret);};
 SystemInterface.Type.SetIntentActive.updateHash = function (p, f) {f (p.id);f (p.isActive ? "true" : "false");};
 SystemInterface.Type.ShowAgentStatus.updateHash = function (p, f) {f (p.hostname);};
-SystemInterface.Type.ShowCameraImage.updateHash = function (p, f) {SystemInterface.Type.AgentHost.updateHash(p.host, f);f ("" + Math.trunc (p.imageTime));};
+SystemInterface.Type.ShowCameraImage.updateHash = function (p, f) {if (typeof p.displayTimestamp == "number") {f ("" + Math.trunc (p.displayTimestamp));}SystemInterface.Type.AgentHost.updateHash(p.host, f);f ("" + Math.trunc (p.imageTime));f ("" + Math.trunc (p.sensor));};
 SystemInterface.Type.ShowColorFillBackground.updateHash = function (p, f) {f ("" + Math.trunc (p.fillColorB));f ("" + Math.trunc (p.fillColorG));f ("" + Math.trunc (p.fillColorR));};
 SystemInterface.Type.ShowCountdownWindow.updateHash = function (p, f) {f ("" + Math.trunc (p.countdownTime));f ("" + Math.trunc (p.icon));f (p.labelText);f ("" + Math.trunc (p.positionX));f ("" + Math.trunc (p.positionY));f (p.windowId);};
 SystemInterface.Type.ShowDesktopCountdown.updateHash = function (p, f) {f ("" + Math.trunc (p.countdownTime));};
@@ -378,12 +496,12 @@ SystemInterface.Type.ShowIconLabelWindow.updateHash = function (p, f) {f ("" + M
 SystemInterface.Type.ShowResourceImageBackground.updateHash = function (p, f) {f (p.imagePath);};
 SystemInterface.Type.ShowWebUrl.updateHash = function (p, f) {f (p.url);};
 SystemInterface.Type.StreamCacheDisplayIntentState.updateHash = function (p, f) {f (p.isShuffle ? "true" : "false");f ("" + Math.trunc (p.maxItemDisplayDuration));f ("" + Math.trunc (p.maxStartPositionDelta));f ("" + Math.trunc (p.minItemDisplayDuration));f ("" + Math.trunc (p.minStartPositionDelta));};
-SystemInterface.Type.StreamItem.updateHash = function (p, f) {var i;f ("" + Math.trunc (p.bitrate));f ("" + Math.trunc (p.duration));f ("" + Math.trunc (p.frameRate));f ("" + Math.trunc (p.height));f ("" + Math.trunc (p.hlsTargetDuration));f (p.id);f (p.name);f ("" + Math.trunc (p.profile));f ("" + Math.trunc (p.segmentCount));for (i = 0; i < p.segmentFilenames.length; ++i) {f (p.segmentFilenames[i]);}for (i = 0; i < p.segmentLengths.length; ++i) {f ("" + Math.trunc (p.segmentLengths[i]));}for (i = 0; i < p.segmentPositions.length; ++i) {f ("" + Math.trunc (p.segmentPositions[i]));}f ("" + Math.trunc (p.size));f (p.sourceId);f ("" + Math.trunc (p.width));};
+SystemInterface.Type.StreamItem.updateHash = function (p, f) {var i;f ("" + Math.trunc (p.bitrate));f ("" + Math.trunc (p.duration));f ("" + Math.trunc (p.frameRate));f ("" + Math.trunc (p.height));f ("" + Math.trunc (p.hlsTargetDuration));f (p.id);f (p.name);f ("" + Math.trunc (p.profile));f ("" + Math.trunc (p.segmentCount));for (i = 0; i < p.segmentFilenames.length; ++i) {f (p.segmentFilenames[i]);}for (i = 0; i < p.segmentLengths.length; ++i) {f ("" + Math.trunc (p.segmentLengths[i]));}for (i = 0; i < p.segmentPositions.length; ++i) {f ("" + Math.trunc (p.segmentPositions[i]));}f ("" + Math.trunc (p.size));f (p.sourceId);if ((typeof p.tags == "object") && (typeof p.tags.length == "number") && (p.tags != null)) {for (i = 0; i < p.tags.length; ++i) {f (p.tags[i]);}}f ("" + Math.trunc (p.width));};
 SystemInterface.Type.StreamServerConfiguration.updateHash = function (p, f) {if (typeof p.dataPath == "string") {f (p.dataPath);}};
 SystemInterface.Type.StreamServerStatus.updateHash = function (p, f) {f ("" + Math.trunc (p.freeStorage));f (p.hlsStreamPath);f (p.htmlCatalogPath);f (p.htmlPlayerPath);f (p.isReady ? "true" : "false");f ("" + Math.trunc (p.streamCount));f (p.thumbnailPath);f ("" + Math.trunc (p.totalStorage));};
 SystemInterface.Type.StreamSummary.updateHash = function (p, f) {f ("" + Math.trunc (p.bitrate));f ("" + Math.trunc (p.duration));f ("" + Math.trunc (p.frameRate));f ("" + Math.trunc (p.height));f (p.id);f (p.name);f ("" + Math.trunc (p.profile));f ("" + Math.trunc (p.segmentCount));f ("" + Math.trunc (p.size));f ("" + Math.trunc (p.width));};
 SystemInterface.Type.TaskItem.updateHash = function (p, f) {f ("" + Math.trunc (p.createTime));f ("" + Math.trunc (p.endTime));f (p.id);f (p.isRunning ? "true" : "false");f (p.name);f ("" + Math.trunc (p.percentComplete));f (p.subtitle);};
-SystemInterface.Type.TimelapseCaptureIntentState.updateHash = function (p, f) {f ("" + Math.trunc (p.capturePeriod));f ("" + Math.trunc (p.imageProfile));f ("" + Math.trunc (p.nextCaptureTime));};
+SystemInterface.Type.TimelapseCaptureIntentState.updateHash = function (p, f) {f ("" + Math.trunc (p.capturePeriod));f ("" + Math.trunc (p.nextCaptureTime));f ("" + Math.trunc (p.sensor));};
 SystemInterface.Type.UpdateAgentConfiguration.updateHash = function (p, f) {SystemInterface.Type.AgentConfiguration.updateHash(p.agentConfiguration, f);};
 SystemInterface.Type.UpdateIntentState.updateHash = function (p, f) {f (p.id);f (p.isReplace ? "true" : "false");};
 SystemInterface.Type.WatchTasks.updateHash = function (p, f) {var i;for (i = 0; i < p.taskIds.length; ++i) {f (p.taskIds[i]);}};
@@ -408,7 +526,9 @@ SystemInterface.Constant.CenterBackground = 2;
 SystemInterface.Constant.CompressedStreamProfile = 1;
 SystemInterface.Constant.CountdownIcon = 2;
 SystemInterface.Constant.CreateTimePrefixField = "a";
+SystemInterface.Constant.DateIcon = 3;
 SystemInterface.Constant.DefaultAuthorizePath = "C18HZb3wsXQoMQN6Laz8S5Lq";
+SystemInterface.Constant.DefaultCameraStreamProfile = 0;
 SystemInterface.Constant.DefaultDisplayState = 0;
 SystemInterface.Constant.DefaultImageProfile = 0;
 SystemInterface.Constant.DefaultInvokePath = "/";
@@ -422,15 +542,19 @@ SystemInterface.Constant.DisplayCondition = "a";
 SystemInterface.Constant.DurationPrefixField = "f";
 SystemInterface.Constant.ErrorIcon = 1;
 SystemInterface.Constant.FastPreviewStreamProfile = 10;
+SystemInterface.Constant.FillStretchBackground = 3;
+SystemInterface.Constant.FitStretchBackground = 1;
 SystemInterface.Constant.HighBitrateStreamProfile = 4;
 SystemInterface.Constant.HighQualityImageProfile = 1;
 SystemInterface.Constant.HorizontalAndVerticalFlip = 3;
 SystemInterface.Constant.HorizontalFlip = 1;
 SystemInterface.Constant.InfoIcon = 0;
 SystemInterface.Constant.LowBitrateStreamProfile = 6;
+SystemInterface.Constant.LowQualityCameraStreamProfile = 1;
 SystemInterface.Constant.LowQualityImageProfile = 2;
 SystemInterface.Constant.LowQualityStreamProfile = 2;
 SystemInterface.Constant.LowestBitrateStreamProfile = 7;
+SystemInterface.Constant.LowestQualityCameraStreamProfile = 2;
 SystemInterface.Constant.LowestQualityImageProfile = 3;
 SystemInterface.Constant.LowestQualityStreamProfile = 3;
 SystemInterface.Constant.MaxCommandPriority = 100;
@@ -446,7 +570,6 @@ SystemInterface.Constant.ShowImageDisplayState = 3;
 SystemInterface.Constant.ShowUrlDisplayState = 1;
 SystemInterface.Constant.SourceMatchStreamProfile = 8;
 SystemInterface.Constant.StartTimePrefixField = "e";
-SystemInterface.Constant.StretchBackground = 1;
 SystemInterface.Constant.TopLeftBackground = 0;
 SystemInterface.Constant.UrlQueryParameter = "c";
 SystemInterface.Constant.UserIdPrefixField = "c";
@@ -457,11 +580,15 @@ SystemInterface.Constant.WebSocketEvent = "SystemInterface";
 SystemInterface.createCommand = function (prefix, commandName, commandParams) {
 	var cmd, out, paramtype, err;
 
-	cmd = SystemInterface.Command[commandName];
+	if (typeof commandName == "number") {
+		cmd = SystemInterface.CommandIdMap["" + commandName];
+	}
+	else {
+		cmd = SystemInterface.Command["" + commandName];
+	}
 	if (cmd == null) {
 		return ("Unknown command name \"" + commandName + "\"");
 	}
-
 	paramtype = SystemInterface.Type[cmd.paramType];
 	if (paramtype == null) {
 		return ("Command \"" + commandName + "\" has unknown parameter type \"" + cmd.paramType + "\"");
@@ -486,7 +613,6 @@ SystemInterface.createCommand = function (prefix, commandName, commandParams) {
 		return (err);
 	}
 	out.params = commandParams;
-
 	return (out);
 };
 
@@ -500,7 +626,6 @@ SystemInterface.getParamError = function (fields, type, allowUnknownKeys) {
 			param = type[i];
 			map[param.name] = true;
 		}
-
 		for (i in fields) {
 			if (map[i] !== true) {
 				return ("Unknown parameter field \"" + i + "\"");
@@ -515,7 +640,6 @@ SystemInterface.getParamError = function (fields, type, allowUnknownKeys) {
 			if (param.flags & SystemInterface.ParamFlag.Required) {
 				return ("Missing required parameter field \"" + param.name + "\"");
 			}
-
 			continue;
 		}
 
@@ -679,7 +803,6 @@ SystemInterface.getParamError = function (fields, type, allowUnknownKeys) {
 						if ((typeof item != "object") || (item == null)) {
 							return ("Parameter field \"" + param.name + "\" has object array with invalid items");
 						}
-
 						if ((param.flags & SystemInterface.ParamFlag.Command) && (item != null)) {
 							err = SystemInterface.parseCommand (item);
 							if (SystemInterface.isError (err)) {
@@ -693,7 +816,6 @@ SystemInterface.getParamError = function (fields, type, allowUnknownKeys) {
 					if (paramtype == null) {
 						return ("Parameter field \"" + param.name + "\" has unknown container type \"" + containertype + "\"");
 					}
-
 					for (j = 0; j < value.length; ++j) {
 						item = value[j];
 						if (item == null) {
@@ -713,7 +835,6 @@ SystemInterface.getParamError = function (fields, type, allowUnknownKeys) {
 				if (typeof value != "object") {
 					return ("Parameter field \"" + param.name + "\" has incorrect type \"" + typeof value + "\", expecting object");
 				}
-
 				if (value == null) {
 					return ("Parameter field \"" + param.name + "\" has null object");
 				}
@@ -1140,7 +1261,6 @@ SystemInterface.parseTypeObject = function (typeName, fields) {
 	if (type == null) {
 		return ("Unknown type \"" + typeName + "\"");
 	}
-
 	return (SystemInterface.parseFields (type, fields));
 };
 
@@ -1159,7 +1279,6 @@ SystemInterface.parseFields = function (paramList, fields) {
 	if ((typeof fields != "object") || (fields == null)) {
 		return ("Field data is not an object");
 	}
-
 	if ((typeof paramList != "object") || (paramList.length === undefined)) {
 		return ("Param list is not an array");
 	}
@@ -1170,7 +1289,6 @@ SystemInterface.parseFields = function (paramList, fields) {
 	if (err != null) {
 		return (err);
 	}
-
 	return (fields);
 };
 
@@ -1182,7 +1300,6 @@ SystemInterface.copyFields = function (typeName, destObject, sourceObject) {
 	if (type == null) {
 		return;
 	}
-
 	for (i = 0; i < type.length; ++i) {
 		name = type[i].name;
 		destObject[name] = sourceObject[name];
@@ -1204,17 +1321,33 @@ SystemInterface.getParamType = function (commandId) {
 	return (null);
 };
 
-// Return the command name for the specified ID, or an empty string if the command wasn't found
+// Return the command name for the specified number ID, or an empty string if the command wasn't found
 SystemInterface.getCommandName = function (commandId) {
 	var i;
 
+	if (typeof commandId != "number") {
+		return ("");
+	}
 	for (i in SystemInterface.Command) {
 		if (SystemInterface.Command[i].id == commandId) {
 			return (SystemInterface.Command[i].name);
 		}
 	}
-
 	return ("");
+};
+
+// Return the command ID associated with the specified string name or number ID, or -1 if the command ID wasn't found
+SystemInterface.getCommandId = function (id) {
+	var cmd;
+
+	if (typeof id == "number") {
+		return ((SystemInterface.CommandIdMap["" + id] != null) ? id : -1);
+	}
+	if (typeof id == "string") {
+		cmd = SystemInterface.Command[id];
+		return ((cmd != null) ? cmd.id : -1);
+	}
+	return (-1);
 };
 
 // Return a boolean value indicating if the provided result (as received from parse-related methods) contains an error
